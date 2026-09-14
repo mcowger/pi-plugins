@@ -1,0 +1,218 @@
+{
+	// pi-controls sample configuration
+	//
+	// Place this file at one of:
+	//   Global:        ~/.pi/agent/extensions/pi-controls.jsonc
+	//   Project-local: .pi/extensions/pi-controls.jsonc
+	//
+	// Both files are merged at startup; project-local wins on conflict.
+	//
+	// Replace /home/user/myproject below with your actual working directory.
+	// All other paths are used as-is.
+
+	"policies": {
+		// ── cwd ────────────────────────────────────────────────────────────────
+		// Full access inside the working project, except git commit and git push
+		// require explicit confirmation.
+		"cwd": {
+			"defaultAction": "allow",
+			"rules": [
+				// Force-push is always blocked — too destructive to allow interactively.
+				{ "action": "deny", "tool": "bash", "pattern": "git push --force*" },
+				{ "action": "deny", "tool": "bash", "pattern": "git push -f*" },
+
+				// Regular push and commit require confirmation.
+				// More specific rules (higher score) win over the allow-all default.
+				{ "action": "ask", "tool": "bash", "pattern": "git push*" },
+				{ "action": "ask", "tool": "bash", "pattern": "git commit*" },
+
+				// Nudge the agent toward pluck_* tools when inside the repo.
+				// The message is prepended to the tool result so the LLM sees it
+				// before any output. The tool call still runs — nothing is blocked.
+				// Pair with nudgeTimeout below to auto-escalate if hints are ignored.
+				{
+					"action": "nudge",
+					"tool": "read",
+					"message": "Prefer pluck_read for repo files — outline mode + semantic context, far cheaper than a raw read."
+				},
+				{
+					"action": "nudge",
+					"tool": "grep",
+					"message": "Prefer pluck_grep for repo content search — same ripgrep behavior, kept inside the index."
+				},
+				{
+					"action": "nudge",
+					"tool": "bash",
+					"pattern": "cat *",
+					"message": "Prefer pluck_read over cat for repo files (raw:true for exact bytes)."
+				},
+				{
+					"action": "nudge",
+					"tool": "bash",
+					"pattern": "grep *",
+					"message": "Prefer pluck_grep over grep for repo text search."
+				},
+				{
+					"action": "nudge",
+					"tool": "bash",
+					"pattern": "rg *",
+					"message": "Prefer pluck_grep over rg for repo text search."
+				},
+				{
+					"action": "nudge",
+					"tool": "bash",
+					"pattern": "head *",
+					"message": "Prefer pluck_read (lines:\"A-B\") over head for repo files."
+				},
+				{
+					"action": "nudge",
+					"tool": "bash",
+					"pattern": "tail *",
+					"message": "Prefer pluck_read (lines:\"A-B\") over tail for repo files."
+				}
+			]
+		},
+
+		// ── open ───────────────────────────────────────────────────────────────
+		// Fully permissive — no restrictions. Used for scratch/temp space.
+		"open": {
+			"defaultAction": "allow",
+			"rules": []
+		},
+
+		// ── readonly ───────────────────────────────────────────────────────────
+		// Read and inspect only. No writes, no mutations, no git history changes.
+		// "$safe-bash" expands to ~90 allow rules for non-mutating bash commands
+		// (file reading, search, git inspection, system info, package queries).
+		// See src/utils/safe-commands.ts for the full list.
+		"readonly": {
+			"defaultAction": "deny",
+			"rules": [
+				// "nudge" allows the tool call but prepends the message to the tool result
+				// so the LLM sees the reminder before any output. A single warning line
+				// also appears in the pi UI. The call is never blocked — the agent always
+				// gets its result. Pair with nudgeTimeout to escalate repeated ignoring.
+				{
+					"action": "nudge",
+					"tool": "read",
+					"message": "Prefer pluck_read for repo files — it provides outline mode and semantic context."
+				},
+				{
+					"action": "nudge",
+					"tool": "grep",
+					"message": "Prefer pluck_grep for content search inside the repo — it understands code structure."
+				},
+
+				// No better alternative for these — plain allow.
+				{ "action": "allow", "tool": "find" },
+				{ "action": "allow", "tool": "ls" },
+
+				// Writes and edits are always blocked in a readonly zone.
+				{ "action": "deny", "tool": "write" },
+				{ "action": "deny", "tool": "edit" },
+
+				// Expand to the full built-in list of safe bash patterns.
+				{ "action": "allow", "tool": "bash", "pattern": "$safe-bash" }
+			]
+		},
+
+		// ── locked ─────────────────────────────────────────────────────────────
+		// Hard deny for everything. Applied via defaultPolicy to any path that
+		// is not explicitly covered by a location entry above.
+		"locked": {
+			"defaultAction": "deny",
+			"rules": []
+		}
+	},
+
+	// ── Persisted approvals ────────────────────────────────────────────────────
+	// Rules saved from an "Allow for Project" or "Allow Globally" prompt are
+	// stored here. Project-local and global lists are combined. The policy field
+	// limits the approval to one named policy; omit it only for a deliberately
+	// policy-agnostic manual approval.
+	"approvalRules": [
+		{
+			"action": "allow",
+			"tool": "bash",
+			"pattern": "bun run build*",
+			"allowUnanalyzed": true,
+			"policy": "cwd"
+		}
+	],
+
+	// ── Locations ─────────────────────────────────────────────────────────────
+	// Maps filesystem paths to policies. Most specific (longest) path wins.
+	"locations": {
+		// "$cwd" is a special location key that resolves to the directory pi was
+		// started from. It matches that directory and anything nested inside it.
+		"$cwd": "cwd",
+
+		// /tmp is scratch space — unrestricted.
+		"/tmp": "open",
+
+		// ~/workspace is a read/inspect-only zone.
+		// ~ is expanded at runtime.
+		"~/workspace": "readonly"
+	},
+
+	// ── Global fallback ───────────────────────────────────────────────────────
+	// Any path not matched by a location entry above uses this policy.
+	// Set to null (or remove this field) to fail-open instead.
+	"defaultPolicy": "locked",
+
+	// ── Mode cycle keybinding ─────────────────────────────────────────────────
+	// Keyboard shortcut that cycles through enforce → ignore → inform modes.
+	// Must be a valid pi KeyId (e.g. "ctrl+shift+m", "alt+p", "ctrl+shift+z").
+	// Defaults to "ctrl+shift+m" when absent.
+	"cycleKey": "ctrl+shift+m",
+
+	// ── Interpreter source analysis ────────────────────────────────────────────
+	// Inspect Python, Node, Bun, and nested shell source supplied through inline
+	// evaluation flags, heredocs, and here-strings. Literal filesystem paths are
+	// evaluated through the normal location policies. Dynamic paths, unknown
+	// calls/imports, subprocesses, parser errors, and other unresolved effects
+	// use unknownAction. Set this object to null to disable the feature. To trust
+	// a narrow, unanalyzed command class, add allowUnanalyzed: true to a matching
+	// allow Bash rule (for example, { action: "allow", tool: "bash", pattern:
+	// "bun run*", allowUnanalyzed: true }).
+	"interpreterAnalysis": {
+		"enabled": true,
+		"unknownAction": "ask", // use "deny" for unattended environments
+		"maxSourceBytes": 262144,
+		"maxDepth": 4,
+		"maxNodes": 10000
+	},
+
+	// ── Agent timeout (circuit breaker) ───────────────────────────────────────
+	// Optional. When the agent racks up `maxDenies` denied tool calls within
+	// `windowSeconds` seconds, the next denied call is escalated from a silent
+	// block to an interactive confirmation (ask). This lets you step in and
+	// redirect an agent that appears to be going rogue instead of letting it
+	// spin indefinitely against a wall of denies.
+	//
+	// The window is sliding — old events age out automatically. Escalation
+	// continues on every subsequent deny until the deny rate drops below the
+	// threshold. Remove this field (or set to null) to disable the circuit breaker.
+	"agentTimeout": {
+		"maxDenies": 3, // escalate after 3 denies…
+		"windowSeconds": 60 // …within any 60-second rolling window
+	},
+
+	// ── Nudge timeout (circuit breaker) ───────────────────────────────────────
+	// Optional. When the agent ignores the same nudge rule `maxNudges` times
+	// within `windowSeconds` seconds, the next occurrence is escalated from a
+	// soft nudge to a hard deny. The deny reason includes the original nudge
+	// message and a strong instruction to change approach.
+	//
+	// Each nudge rule has its own independent counter — read nudges and grep
+	// nudges are tracked separately, and bash pattern nudges (e.g. "cat *" and
+	// "grep *") are each tracked independently.
+	//
+	// The counter resets after escalation, giving the agent another window of
+	// chances rather than locking it out permanently. Remove this field (or set
+	// to null) to disable escalation and keep nudges as soft hints indefinitely.
+	"nudgeTimeout": {
+		"maxNudges": 3, // escalate after 3 ignored nudges for the same rule…
+		"windowSeconds": 60 // …within any 60-second rolling window
+	}
+}

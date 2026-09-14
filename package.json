@@ -1,0 +1,30 @@
+{
+	"name": "pi-plugins",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"packages/*"
+	],
+	"scripts": {
+		"postinstall": "command -v lefthook >/dev/null 2>&1 && lefthook install || true",
+		"check": "bun run check:pi-control && bun run check:pi-suppress-providers",
+		"check:pi-control": "(cd packages/pi-control && bun run check)",
+		"check:pi-suppress-providers": "(cd packages/pi-suppress-providers && bun run check)",
+		"test": "bun --cwd packages/pi-control test && bun --cwd packages/pi-suppress-providers test",
+		"lint": "(cd packages/pi-control && bun run lint) && (cd packages/pi-suppress-providers && bun run lint)",
+		"format": "(cd packages/pi-control && bun run format) && (cd packages/pi-suppress-providers && bun run format)",
+		"format:check": "(cd packages/pi-control && bun run format:check) && (cd packages/pi-suppress-providers && bun run format:check)"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.1",
+		"@earendil-works/pi-ai": "0.80.6",
+		"@earendil-works/pi-coding-agent": "0.80.6",
+		"@types/bun": "^1.3.14",
+		"@types/node": "^26.1.1",
+		"bun-types": "1.3.14",
+		"lefthook": "2.1.6",
+		"typescript": "^6.0.3",
+		"@earendil-works/pi-tui": "0.80.6"
+	}
+}
