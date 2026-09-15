@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"strict": true,
+		"lib": ["ESNext", "DOM"],
+		"types": ["bun-types"],
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	"include": ["index.ts", "src/**/*.ts", "tests/**/*.ts"]
+}
