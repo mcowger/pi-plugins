@@ -4,7 +4,7 @@
 	"description": "GPT-only multi-agent tools, long context, Fast mode, and Codex utilities for Pi",
 	"license": "MIT",
 	"type": "module",
-	"files": ["src", "index.ts", "apply-patch.lark", "README.md", "THIRD_PARTY_NOTICES.md"],
+	"files": ["src", "index.ts", "apply-patch.lark", "README.md", "API.md", "THIRD_PARTY_NOTICES.md"],
 	"scripts": {
 		"check": "bun run lint && bun run typecheck",
 		"lint": "bunx biome check index.ts src tests",

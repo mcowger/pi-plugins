@@ -10,7 +10,7 @@ package:
 - Hierarchical multi-agent collaboration with in-process Pi agent sessions.
 
 It uses basic slash commands and machine-readable JSON notifications. There is
-no custom TUI.
+no custom TUI. See [API.md](./API.md) for command, tool, and RPC payload shapes.
 
 ## Install from Git
 
