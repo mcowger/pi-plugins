@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const providerEnvPath = fileURLToPath(new URL("./provider-env.ts", import.meta.url));
 
 interface SuppressionResult {
 	deleted: Record<string, string>;
@@ -8,7 +11,7 @@ interface SuppressionResult {
 
 function suppressInIsolation(env: Record<string, string>, enabledProviders: string[]): SuppressionResult {
 	const script = `
-		import { suppressProviderEnvVars } from "./src/provider-env.ts";
+		import { suppressProviderEnvVars } from ${JSON.stringify(providerEnvPath)};
 		const deleted = suppressProviderEnvVars(${JSON.stringify(enabledProviders)});
 		console.log(JSON.stringify({ deleted, remaining: ${JSON.stringify(Object.keys(env))}.reduce((result, key) => ({ ...result, [key]: process.env[key] }), {}) }));
 	`;
