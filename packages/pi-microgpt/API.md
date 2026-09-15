@@ -119,22 +119,19 @@ Replaces Pi's active `edit` and `write` tools on supported models when file-edit
 
 ```ts
 type ApplyPatchInput = {
-  patch: string; // Complete Codex *** Begin Patch ... *** End Patch text
+  input: string; // Complete Codex *** Begin Patch ... *** End Patch text
+  dryRun?: boolean; // Validate and preview without writing
 };
 ```
 
-The extension parses and applies the patch in TypeScript. Success returns text content and details:
+The extension delegates parsing, validation, application, and rendering to the pinned
+`@paulpham157/apply-patch@0.3.0` dependency. Success returns text content and details:
 
 ```ts
 type ApplyPatchDetails = {
-  files: {
-    kind: "add" | "update" | "delete";
-    path: string;
-    moveTo?: string;
-    added?: number;
-    removed?: number;
-    diff?: string;
-  }[];
+  preview?: unknown;
+  result?: unknown;
+  dryRun?: boolean;
 };
 ```
 

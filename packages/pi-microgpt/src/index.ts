@@ -5,8 +5,8 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { createApplyPatchTool } from "@paulpham157/apply-patch/src/index.ts";
 import { Type } from "typebox";
-import { makeApplyPatchTool } from "./apply-patch/tool.ts";
 import { isSupportedModel } from "./model-support.ts";
 import {
 	buildWebSearchInput,
@@ -244,7 +244,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool(makeApplyPatchTool());
+	pi.registerTool(createApplyPatchTool());
 
 	const webSearch: ToolDefinition<typeof webSearchSchema> = {
 		name: "web_search",

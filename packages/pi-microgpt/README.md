@@ -240,5 +240,5 @@ bun run check
 bun --cwd packages/pi-microgpt test
 ```
 
-The copied `apply-patch.lark` grammar is covered by
+The pinned upstream `@paulpham157/apply-patch` dependency is covered by
 `THIRD_PARTY_NOTICES.md`.
