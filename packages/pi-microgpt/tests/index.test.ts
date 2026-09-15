@@ -62,6 +62,8 @@ test("multi-agent tools are active only for supported models", async () => {
 	const supported = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
 	Object.assign(supported, { cwd: "/tmp/project", isProjectTrusted: () => true });
 	start({}, supported);
+	expect(pi.getActiveTools()).not.toContain("spawn_agent");
+	await pi.commands.get("subagents").handler("on", supported);
 	expect(pi.getActiveTools()).toContain("spawn_agent");
 	select({ model: model({ provider: "proxy", api: "openai-responses", id: "gpt-5.4" }) }, supported);
 	expect(pi.getActiveTools()).not.toContain("spawn_agent");
@@ -72,12 +74,29 @@ test("multi-agent tools are active only for supported models", async () => {
 	await pi.handlers.get("session_shutdown")({}, supported);
 });
 
+test("subagent tools are off by default and can be enabled for the session", async () => {
+	const pi = mockPi();
+	installMultiAgentTools(pi as any, isSupportedModel);
+	pi.activateRuntime();
+	const supported = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
+	await pi.commands.get("subagents").handler("status", supported);
+	expect(JSON.parse(supported.notifications[0])).toMatchObject({ command: "subagents", enabled: false });
+	await pi.commands.get("subagents").handler("on", supported);
+	expect(JSON.parse(supported.notifications[1])).toMatchObject({ command: "subagents", enabled: true });
+	expect(pi.getActiveTools()).toContain("spawn_agent");
+	await pi.handlers.get("session_start")({}, supported);
+	expect(pi.getActiveTools()).not.toContain("spawn_agent");
+});
+
 test("multi-agent instructions suggest models and reasoning by task", () => {
 	const pi = mockPi();
 	installMultiAgentTools(pi as any, isSupportedModel);
+	pi.activateRuntime();
+	const ctx = context(model({ provider: "plexus", api: "openai-responses", id: "gpt-5.6-luna" }));
+	pi.commands.get("subagents").handler("on", ctx);
 	const prompt = pi.handlers.get("before_agent_start")(
 		{ systemPrompt: "Base instructions." },
-		context(model({ provider: "plexus", api: "openai-responses", id: "gpt-5.6-luna" })),
+		ctx,
 	).systemPrompt;
 	expect(prompt).toContain("exploration or commit messages: gpt-5.6-luna with low reasoning");
 	expect(prompt).toContain("implementation: gpt-5.6-luna with xhigh reasoning");
@@ -119,6 +138,8 @@ function context(model: any) {
 		notifications,
 		mode: "rpc",
 		hasUI: false,
+		cwd: "/tmp/project",
+		isProjectTrusted: () => true,
 		ui: { notify(message: string) { notifications.push(message); } },
 	};
 }

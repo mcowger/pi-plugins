@@ -26,7 +26,7 @@ The extension reports command results with Pi's `ui.notify` API. In RPC mode, th
 
 ### Request arguments
 
-The `fast`, `long-context`, and `web-search` commands accept a plain action or a JSON object:
+The `fast`, `long-context`, `web-search`, and `subagents` commands accept a plain action or a JSON object:
 
 ```text
 /fast on
@@ -61,7 +61,7 @@ The JSON string in the RPC notification's `message` follows this shape:
 ```ts
 type CommandResponse = {
   type: "pi-microgpt.response";
-  command: "fast" | "long-context" | "web-search";
+  command: "fast" | "long-context" | "web-search" | "subagents";
   success: boolean;
   requestId?: string;
   enabled?: boolean;
@@ -102,8 +102,10 @@ Example:
 | `long-context-status` | Reports long-context state and the current context window. |
 | `web-search` | Toggles or sets web search. |
 | `web-search-status` | Reports the web-search setting. |
+| `subagents` | Toggles or sets the subagent tools. |
+| `subagents-status` | Reports the subagent-tools setting. |
 
-All three settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast mode adds `service_tier: "priority"` only to requests for the active supported model. Web search is callable only on a supported model; its `enabled` field reports the session setting, while `supported` reports model eligibility.
+All four settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast mode adds `service_tier: "priority"` only to requests for the active supported model. Web search and subagent tools are callable only on a supported model; their `enabled` fields report the session setting, while `supported` reports model eligibility.
 
 Supported models use the `openai-responses` or `openai-codex-responses` API and a GPT 5.5+ model ID. Provider names do not affect eligibility.
 
@@ -184,7 +186,7 @@ type WebSearchDetails = {
 
 ### Multi-agent tools
 
-These six tools are available on supported models. Their successful `content[0].text` is a pretty-printed JSON encoding of the same object stored in `details`.
+These six tools are available after `/subagents on` on supported models. Their successful `content[0].text` is a pretty-printed JSON encoding of the same object stored in `details`.
 
 | Tool | Input | Success details |
 | --- | --- | --- |

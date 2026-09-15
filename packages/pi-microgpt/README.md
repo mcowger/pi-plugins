@@ -7,6 +7,7 @@ package:
 - Fast mode through `service_tier: "priority"`.
 - Codex-compatible TypeScript `apply_patch`.
 - Optional Codex web search.
+- Optional Codex subagent tools.
 - Hierarchical multi-agent collaboration with in-process Pi agent sessions.
 
 It uses basic slash commands and machine-readable JSON notifications. There is
@@ -62,7 +63,7 @@ inherit the current model by default. A `spawn_agent` model override must
 resolve to a supported GPT 5.5+ Responses API model, and the same restriction
 applies when a child agent recursively spawns another agent.
 
-Available tools:
+When enabled on a supported model, available tools:
 
 - `spawn_agent`: start a child for an independent task; supports `fork_turns`
   and an optional model override.
@@ -86,6 +87,16 @@ override fits the task:
 - Implementation: `gpt-5.6-luna` with `xhigh` reasoning.
 - Debugging or complex integration: `gpt-5.6-terra` with `high` reasoning.
 - Deep brainstorming or design work: `gpt-5.6-sol` with `high` reasoning.
+
+Subagent tools are off by default and session-only. Enable them explicitly:
+
+```text
+/subagents on
+/subagents off
+/subagents
+/subagents status
+/subagents-status
+```
 
 ## Long context
 
@@ -216,8 +227,8 @@ aliases accept a plain request ID too:
 /web-search-status req-5
 ```
 
-The plugin does not persist long-context, Fast mode, or web-search state.
-Every session starts with all three disabled.
+The plugin does not persist long-context, Fast mode, web-search, or subagent state.
+Every session starts with all four disabled.
 
 ## Development
 

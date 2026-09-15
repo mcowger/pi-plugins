@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionCommandContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createCollaborationTools } from "pi-multiagents-v2/extensions/collaboration-tools.ts";
 import { ROOT, TeamManager } from "pi-multiagents-v2/extensions/team-manager.ts";
 import type { PiModel } from "./model-support.ts";
@@ -20,6 +20,41 @@ Message Type: MESSAGE | FINAL_ANSWER
 Task name: <recipient>
 Sender: <author>
 Payload: <payload>`;
+
+type ParsedCommand = { action: string; requestId?: string };
+
+function parseCommand(args: string): ParsedCommand | undefined {
+	const trimmed = args.trim();
+	if (!trimmed) return { action: "toggle" };
+	if (trimmed.startsWith("{")) {
+		try {
+			const request = JSON.parse(trimmed) as Record<string, unknown>;
+			if (!request || Array.isArray(request) || typeof request.action !== "string") return undefined;
+			if (Object.keys(request).some((key) => key !== "action" && key !== "requestId")) return undefined;
+			if (request.requestId !== undefined && typeof request.requestId !== "string") return undefined;
+			return {
+				action: request.action.trim().toLowerCase(),
+				...(typeof request.requestId === "string" ? { requestId: request.requestId } : {}),
+			};
+		} catch {
+			return undefined;
+		}
+	}
+	const words = trimmed.toLowerCase().split(/\s+/);
+	if (words.length === 1) return { action: words[0] };
+	return undefined;
+}
+
+function parseStatusRequest(args: string): ParsedCommand | undefined {
+	const trimmed = args.trim();
+	if (!trimmed) return { action: "status" };
+	if (!trimmed.startsWith("{")) return { action: "status", requestId: trimmed };
+	return parseCommand(trimmed);
+}
+
+function emitCommand(ctx: ExtensionCommandContext, success: boolean, payload: Record<string, unknown>, requestId?: string): void {
+	ctx.ui.notify(JSON.stringify({ type: "pi-microgpt.response", command: "subagents", success, ...(requestId !== undefined ? { requestId } : {}), ...payload }), success ? "info" : "warning");
+}
 
 export function validateSpawnModelOverride(
 	modelName: string | undefined,
@@ -57,6 +92,7 @@ function guardedTools(tools: ToolDefinition[], isSupportedModel: SupportedModelC
 }
 
 export function installMultiAgentTools(pi: ExtensionAPI, isSupportedModel: SupportedModelCheck): void {
+	let subagentsEnabled = false;
 	const team = new TeamManager(pi);
 	const spawn = team.spawn.bind(team);
 	team.spawn = async (source, params, ctx) => {
@@ -77,7 +113,7 @@ export function installMultiAgentTools(pi: ExtensionAPI, isSupportedModel: Suppo
 
 	function syncTools(model: Model<Api> | undefined): void {
 		const active = new Set(pi.getActiveTools());
-		if (isSupportedModel(model)) {
+		if (subagentsEnabled && isSupportedModel(model)) {
 			for (const name of toolNames) active.add(name);
 		} else {
 			for (const name of toolNames) active.delete(name);
@@ -85,13 +121,52 @@ export function installMultiAgentTools(pi: ExtensionAPI, isSupportedModel: Suppo
 		pi.setActiveTools([...active]);
 	}
 
+	function commandPayload(model: Model<Api> | undefined): Record<string, unknown> {
+		return {
+			enabled: subagentsEnabled,
+			supported: isSupportedModel(model),
+			...(model ? { provider: model.provider, model: model.id, api: model.api } : {}),
+		};
+	}
+
+	pi.registerCommand("subagents", {
+		description: "Enable or disable the Codex subagent tools",
+		handler: async (args, ctx) => {
+			const request = parseCommand(args);
+			if (!request || !["toggle", "on", "off", "status"].includes(request.action)) {
+				emitCommand(ctx, false, { error: "Expected on, off, status, or a JSON request." }, request?.requestId);
+				return;
+			}
+			if (request.action === "status") {
+				emitCommand(ctx, true, commandPayload(ctx.model as Model<Api> | undefined), request.requestId);
+				return;
+			}
+			subagentsEnabled = request.action === "on" || (request.action === "toggle" && !subagentsEnabled);
+			syncTools(ctx.model as Model<Api> | undefined);
+			emitCommand(ctx, true, commandPayload(ctx.model as Model<Api> | undefined), request.requestId);
+		},
+	});
+
+	pi.registerCommand("subagents-status", {
+		description: "Report subagent tools as JSON",
+		handler: async (args, ctx) => {
+			const request = parseStatusRequest(args);
+			if (!request || request.action !== "status") {
+				emitCommand(ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId);
+				return;
+			}
+			emitCommand(ctx, true, commandPayload(ctx.model as Model<Api> | undefined), request.requestId);
+		},
+	});
+
 	pi.on("session_start", (_event, ctx) => {
+		subagentsEnabled = false;
 		team.start(ctx);
 		syncTools(ctx.model);
 	});
 	pi.on("model_select", (event) => syncTools(event.model));
 	pi.on("before_agent_start", (event, ctx) => {
-		if (!isSupportedModel(ctx.model)) return;
+		if (!subagentsEnabled || !isSupportedModel(ctx.model)) return;
 		return {
 			systemPrompt: event.systemPrompt.includes("You are /root, the primary agent in a team of Pi agents.")
 				? event.systemPrompt
