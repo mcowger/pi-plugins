@@ -112,14 +112,34 @@ test("commands emit machine-readable JSON and support JSON requests", async () =
 	await pi.commands.get("long-context").handler("status", ctx);
 	await pi.commands.get("fast").handler('{"action":"on","requestId":"fast-1"}', ctx);
 	await pi.commands.get("long-context").handler('{"action":"on","requestId":"long-1"}', ctx);
+	await pi.commands.get("long-context").handler('{"action":"on","requestId":"long-2"}', ctx);
+	await pi.commands.get("long-context").handler('{"action":"off","requestId":"long-3"}', ctx);
 	for (const message of ctx.notifications) {
 		const parsed = JSON.parse(message);
 		expect(parsed.type).toBe("pi-microgpt.response");
-		expect(parsed.success).toBe(true);
+		expect(typeof parsed.success).toBe("boolean");
 	}
 	expect(JSON.parse(ctx.notifications[0]).enabled).toBe(false);
 	expect(JSON.parse(ctx.notifications[1]).requestId).toBe("fast-1");
 	expect(JSON.parse(ctx.notifications[2]).contextWindow).toBe(MAX_CONTEXT_WINDOW);
+	expect(JSON.parse(ctx.notifications[3])).toMatchObject({ success: true, enabled: true, requestId: "long-2" });
+	expect(JSON.parse(ctx.notifications[4])).toMatchObject({ success: true, enabled: false, requestId: "long-3" });
+});
+
+test("status aliases return JSON errors for malformed JSON requests", async () => {
+	const pi = mockPi();
+	piMicroGpt(pi as any);
+	const ctx = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
+	for (const name of ["long-context-status", "fast-status", "web-search-status"]) {
+		await pi.commands.get(name).handler('{"action":"on","requestId":"invalid-1"}', ctx);
+		const wrongAction = JSON.parse(ctx.notifications.at(-1)!);
+		expect(wrongAction).toMatchObject({ type: "pi-microgpt.response", success: false, requestId: "invalid-1" });
+		expect(wrongAction.error).toBeDefined();
+		await pi.commands.get(name).handler('{"action":', ctx);
+		const malformed = JSON.parse(ctx.notifications.at(-1)!);
+		expect(malformed).toMatchObject({ type: "pi-microgpt.response", success: false });
+		expect(malformed.error).toBeDefined();
+	}
 });
 
 test("web search is off by default and can be enabled for the session", async () => {

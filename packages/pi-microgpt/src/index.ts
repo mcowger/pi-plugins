@@ -39,7 +39,7 @@ export function withFastServiceTier(payload: unknown): unknown {
 	return { ...(payload as Record<string, unknown>), service_tier: FAST_SERVICE_TIER };
 }
 
-type ParsedCommand = { action: string; requestId?: string; value?: boolean };
+type ParsedCommand = { action: string; requestId?: string };
 
 function parseCommand(args: string): ParsedCommand | undefined {
 	const trimmed = args.trim();
@@ -47,11 +47,12 @@ function parseCommand(args: string): ParsedCommand | undefined {
 	if (trimmed.startsWith("{")) {
 		try {
 			const request = JSON.parse(trimmed) as Record<string, unknown>;
-			if (!request || typeof request.action !== "string") return undefined;
+			if (!request || Array.isArray(request) || typeof request.action !== "string") return undefined;
+			if (Object.keys(request).some((key) => key !== "action" && key !== "requestId")) return undefined;
+			if (request.requestId !== undefined && typeof request.requestId !== "string") return undefined;
 			return {
 				action: request.action.trim().toLowerCase(),
 				...(typeof request.requestId === "string" ? { requestId: request.requestId } : {}),
-				...(typeof request.value === "boolean" ? { value: request.value } : {}),
 			};
 		} catch {
 			return undefined;
@@ -63,7 +64,14 @@ function parseCommand(args: string): ParsedCommand | undefined {
 }
 
 function response(command: string, success: boolean, payload: Record<string, unknown> = {}, requestId?: string): string {
-	return JSON.stringify({ type: "pi-microgpt.response", command, success, ...(requestId ? { requestId } : {}), ...payload });
+	return JSON.stringify({ type: "pi-microgpt.response", command, success, ...(requestId !== undefined ? { requestId } : {}), ...payload });
+}
+
+function parseStatusRequest(args: string): ParsedCommand | undefined {
+	const trimmed = args.trim();
+	if (!trimmed) return { action: "status" };
+	if (!trimmed.startsWith("{")) return { action: "status", requestId: trimmed };
+	return parseCommand(trimmed);
 }
 
 function notify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error" = "info"): void {
@@ -173,8 +181,12 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 				return;
 			}
 			const next = request.action === "on" || (request.action === "toggle" && !enabled);
+			if (next === enabled) {
+				emitCommand("long-context", ctx, true, { enabled, supported: isSupportedModel(ctx.model), contextWindow: ctx.model?.contextWindow, ...modelInfo(ctx.model) }, request.requestId);
+				return;
+			}
 			if (!setLongContext(next, ctx.model)) {
-				emitCommand("long-context", ctx, false, { error: next ? "Current model does not support long context or it is already enabled." : "Long context is not enabled." , supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId, "warning");
+				emitCommand("long-context", ctx, false, { error: "Unable to change long context for the current model.", supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId, "warning");
 				return;
 			}
 			emitCommand("long-context", ctx, true, { enabled: next, supported: true, contextWindow: ctx.model?.contextWindow, ...modelInfo(ctx.model) }, request.requestId);
@@ -184,9 +196,12 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 	pi.registerCommand("long-context-status", {
 		description: "Report long context as JSON",
 		handler: async (args, ctx) => {
-			const request = parseCommand(args);
-			const requestId = args.trim().startsWith("{") ? request?.requestId : args.trim() || undefined;
-			emitCommand("long-context", ctx, true, { enabled: longContextModel === ctx.model, supported: isSupportedModel(ctx.model), contextWindow: ctx.model?.contextWindow, ...modelInfo(ctx.model) }, requestId);
+			const request = parseStatusRequest(args);
+			if (!request || request.action !== "status") {
+				emitCommand("long-context", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
+				return;
+			}
+			emitCommand("long-context", ctx, true, { enabled: longContextModel === ctx.model, supported: isSupportedModel(ctx.model), contextWindow: ctx.model?.contextWindow, ...modelInfo(ctx.model) }, request.requestId);
 		},
 	});
 
@@ -210,9 +225,12 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 	pi.registerCommand("fast-status", {
 		description: "Report Fast mode as JSON",
 		handler: async (args, ctx) => {
-			const request = parseCommand(args);
-			const requestId = args.trim().startsWith("{") ? request?.requestId : args.trim() || undefined;
-			emitCommand("fast", ctx, true, { enabled: fastEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, requestId);
+			const request = parseStatusRequest(args);
+			if (!request || request.action !== "status") {
+				emitCommand("fast", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
+				return;
+			}
+			emitCommand("fast", ctx, true, { enabled: fastEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
 		},
 	});
 
@@ -237,9 +255,12 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 	pi.registerCommand("web-search-status", {
 		description: "Report web search as JSON",
 		handler: async (args, ctx) => {
-			const request = parseCommand(args);
-			const requestId = args.trim().startsWith("{") ? request?.requestId : args.trim() || undefined;
-			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, requestId);
+			const request = parseStatusRequest(args);
+			if (!request || request.action !== "status") {
+				emitCommand("web-search", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
+				return;
+			}
+			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
 		},
 	});
 
