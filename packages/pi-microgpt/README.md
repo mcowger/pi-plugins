@@ -78,6 +78,17 @@ Child sessions follow the parent's persistence policy and can be inspected
 with Pi's `/resume` and `/tree` commands. Active teams are shut down when the
 Pi session ends.
 
+### Delegation hints
+
+Child agents inherit the parent model and reasoning level by default. The
+injected collaboration instructions suggest these starting points when an
+override fits the task:
+
+- Exploration or commit messages: `gpt-5.6-luna` with `low` reasoning.
+- Implementation: `gpt-5.6-luna` with `xhigh` reasoning.
+- Debugging or complex integration: `gpt-5.6-terra` with `high` reasoning.
+- Deep brainstorming or design work: `gpt-5.6-sol` with `high` reasoning.
+
 ## Long context
 
 Long context is off by default and is session-only. It raises the selected

@@ -67,6 +67,19 @@ test("multi-agent tools are active only for supported models", async () => {
 	await pi.handlers.get("session_shutdown")({}, supported);
 });
 
+test("multi-agent instructions suggest models and reasoning by task", () => {
+	const pi = mockPi();
+	installMultiAgentTools(pi as any, isSupportedModel);
+	const prompt = pi.handlers.get("before_agent_start")(
+		{ systemPrompt: "Base instructions." },
+		context(model({ provider: "plexus", api: "openai-responses", id: "gpt-5.6-luna" })),
+	).systemPrompt;
+	expect(prompt).toContain("exploration or commit messages: gpt-5.6-luna with low reasoning");
+	expect(prompt).toContain("implementation: gpt-5.6-luna with xhigh reasoning");
+	expect(prompt).toContain("debugging or complex integration: gpt-5.6-terra with high reasoning");
+	expect(prompt).toContain("deep brainstorming or design work: gpt-5.6-sol with high reasoning");
+});
+
 function mockPi() {
 	const commands = new Map<string, any>();
 	const handlers = new Map<string, any>();
