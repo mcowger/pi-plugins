@@ -8,7 +8,7 @@ Monorepo for my Pi extensions and packages.
 | --- | --- | --- |
 | `pi-control` | [`@mcowger/pi-control`](https://www.npmjs.com/package/@mcowger/pi-control) | Action-based filesystem and tool-call policies |
 | `pi-suppress-providers` | [`@mcowger/pi-suppress-providers`](https://www.npmjs.com/package/@mcowger/pi-suppress-providers) | Limits which providers appear in Pi's model picker |
-| `pi-microgpt` | [`@mcowger/pi-microgpt`](https://www.npmjs.com/package/@mcowger/pi-microgpt) | Codex apply-patch, optional web search, long context, and Fast mode |
+| `pi-microgpt` | [`@mcowger/pi-microgpt`](https://www.npmjs.com/package/@mcowger/pi-microgpt) | GPT-only multi-agent tools, Codex apply-patch, optional web search, long context, and Fast mode |
 
 `plexus-agent-plugins` remains a separate repository because it supports both Pi and Oh My Pi.
 

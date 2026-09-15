@@ -7,6 +7,7 @@ package:
 - Fast mode through `service_tier: "priority"`.
 - Native OpenAI Codex `apply_patch`.
 - Optional Codex web search.
+- Hierarchical multi-agent collaboration with in-process Pi agent sessions.
 
 It uses basic slash commands and machine-readable JSON notifications. There is
 no custom TUI.
@@ -49,8 +50,33 @@ an extension update. The extension does not claim that every future model has
 a 1.05M context window. Check the model's documentation before using long
 context with a new slug.
 
-The same check controls all four features. The provider does not matter, and
-the model ID does not need to contain `codex`.
+The same check controls all features. The provider does not matter, and the
+model ID does not need to contain `codex`.
+
+## Multi-agent tools
+
+The plugin uses `pi-multiagents-v2` 0.1.2 (MIT) for its team manager and
+collaboration tools. It does not load that package's extension entry point.
+
+The tools are active only while the selected model passes the shared model
+check. Each tool also checks the current model when it runs. Child agents
+inherit the current model by default. A `spawn_agent` model override must
+resolve to a supported GPT 5.5+ Responses API model, and the same restriction
+applies when a child agent recursively spawns another agent.
+
+Available tools:
+
+- `spawn_agent`: start a child for an independent task; supports `fork_turns`
+  and an optional model override.
+- `send_message`: send a message without waking an idle agent.
+- `followup_task`: assign more work to an existing child.
+- `wait_agent`: wait for new messages or steering input.
+- `list_agents`: inspect the agent tree and statuses.
+- `interrupt_agent`: stop a child turn while retaining its session.
+
+Child sessions follow the parent's persistence policy and can be inspected
+with Pi's `/resume` and `/tree` commands. Active teams are shut down when the
+Pi session ends.
 
 ## Long context
 

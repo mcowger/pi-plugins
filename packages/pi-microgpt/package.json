@@ -1,7 +1,7 @@
 {
 	"name": "@mcowger/pi-microgpt",
 	"version": "0.1.0",
-	"description": "Codex-oriented Pi tools with long context and Fast mode",
+	"description": "GPT-only multi-agent tools, long context, Fast mode, and Codex utilities for Pi",
 	"license": "MIT",
 	"type": "module",
 	"files": ["src", "index.ts", "apply-patch.lark", "README.md", "THIRD_PARTY_NOTICES.md"],
@@ -13,25 +13,32 @@
 		"format:check": "bunx biome check index.ts src tests",
 		"test": "bun test"
 	},
-	"keywords": ["pi-package", "pi", "codex", "gpt", "apply-patch", "web-search"],
+	"keywords": ["pi-package", "pi", "codex", "gpt", "multi-agent", "apply-patch", "web-search"],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/mcowger/pi-plugins.git",
 		"directory": "packages/pi-microgpt"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-ai": "0.80.6",
-		"@earendil-works/pi-coding-agent": "0.80.6"
+		"@earendil-works/pi-agent-core": ">=0.85.1",
+		"@earendil-works/pi-ai": ">=0.85.1",
+		"@earendil-works/pi-coding-agent": ">=0.85.1",
+		"@earendil-works/pi-tui": ">=0.85.1"
 	},
 	"dependencies": {
 		"@openai/codex": "0.147.0",
+		"pi-multiagents-v2": "0.1.2",
 		"typebox": "^1.3.13"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.1",
+		"@earendil-works/pi-agent-core": "0.85.1",
+		"@earendil-works/pi-ai": "0.85.1",
+		"@earendil-works/pi-coding-agent": "0.85.1",
+		"@earendil-works/pi-tui": "0.85.1",
 		"@types/node": "^26.1.1",
 		"bun-types": "1.3.14",
 		"typescript": "^6.0.3"
 	},
-	"pi": {"extensions": ["./index.ts"]}
+	"pi": {"extensions": ["./index.ts", "./src/multiagents-entry.ts"]}
 }

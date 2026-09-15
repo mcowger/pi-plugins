@@ -8,6 +8,7 @@ import type {
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { isSupportedModel } from "./model-support.ts";
 import {
 	CODEX_APPLY_PATCH_FLAG,
 	resolveCodexExecutable,
@@ -22,19 +23,11 @@ import {
 
 export const MAX_CONTEXT_WINDOW = 1_050_000;
 export const FAST_SERVICE_TIER = "priority";
-export const RESPONSES_APIS = new Set(["openai-responses", "openai-codex-responses"]);
-export const SUPPORTED_MODEL_SLUG = /^gpt-(?:5\.(?:[5-9]|\d{2,})|[6-9]\d*(?:\.\d+)?)(?:[-_.]|$)/i;
+export { isResponsesModel, isSupportedModel, RESPONSES_APIS, SUPPORTED_MODEL_SLUG } from "./model-support.ts";
 
 const replacedTools = ["edit", "write"];
 
 type PiModel = Model<Api>;
-
-export function isResponsesModel(model: PiModel | undefined): model is PiModel {
-	return model !== undefined && RESPONSES_APIS.has(model.api);
-}
-export function isSupportedModel(model: PiModel | undefined): model is PiModel {
-	return model !== undefined && isResponsesModel(model) && SUPPORTED_MODEL_SLUG.test(model.id);
-}
 
 export function shouldApplyFastMode(model: PiModel | undefined, payload: unknown): boolean {
 	if (!isSupportedModel(model) || !payload || typeof payload !== "object") return false;

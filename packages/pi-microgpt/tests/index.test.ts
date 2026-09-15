@@ -8,6 +8,7 @@ import {
 	withFastServiceTier,
 } from "../src/index.ts";
 import piMicroGpt from "../src/index.ts";
+import { installMultiAgentTools, validateSpawnModelOverride } from "../src/multiagents.ts";
 
 function model(overrides: Partial<{ provider: string; api: string; id: string; contextWindow: number }>) {
 		return { name: overrides.id ?? "test", baseUrl: "https://example.com", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, maxTokens: 1000, provider: "openai", api: "openai-responses", id: "gpt-5.5", contextWindow: 272_000, ...overrides } as any;
@@ -36,15 +37,45 @@ test("Codex tools use the same shared model restriction", () => {
 	expect(isSupportedModel(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.4-codex" }))).toBe(false);
 });
 
+test("multi-agent child overrides must satisfy the shared model restriction", () => {
+	const inherited = model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" });
+	const findModel = (provider: string, id: string) => model({ provider, id, api: "openai-responses" });
+	expect(() => validateSpawnModelOverride(undefined, inherited, findModel, isSupportedModel)).not.toThrow();
+	expect(() => validateSpawnModelOverride("gpt-6", inherited, findModel, isSupportedModel)).not.toThrow();
+	expect(() => validateSpawnModelOverride("anthropic/claude-sonnet", inherited, findModel, isSupportedModel)).toThrow(/must be a supported GPT/);
+	expect(() => validateSpawnModelOverride(undefined, model({ api: "anthropic-messages", id: "claude" }), findModel, isSupportedModel)).toThrow(/require a supported GPT/);
+});
+
+test("multi-agent tools are active only for supported models", async () => {
+	const pi = mockPi();
+	installMultiAgentTools(pi as any, isSupportedModel);
+	expect(pi.getActiveTools()).not.toContain("spawn_agent");
+	const start = pi.handlers.get("session_start");
+	const select = pi.handlers.get("model_select");
+	const supported = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
+	Object.assign(supported, { cwd: "/tmp/project", isProjectTrusted: () => true });
+	start({}, supported);
+	expect(pi.getActiveTools()).toContain("spawn_agent");
+	select({ model: model({ provider: "proxy", api: "openai-responses", id: "gpt-5.4" }) }, supported);
+	expect(pi.getActiveTools()).not.toContain("spawn_agent");
+	select({ model: model({ provider: "proxy", api: "openai-responses", id: "gpt-6" }) }, supported);
+	expect(pi.getActiveTools()).toContain("spawn_agent");
+	const unsupported = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.4" }));
+	await expect(pi.tools.get("spawn_agent").execute("call-1", { task_name: "worker", message: "test" }, undefined, undefined, unsupported as any)).rejects.toThrow(/require a supported GPT/);
+	await pi.handlers.get("session_shutdown")({}, supported);
+});
+
 function mockPi() {
 	const commands = new Map<string, any>();
 	const handlers = new Map<string, any>();
+	const tools = new Map<string, any>();
 	let activeTools = ["edit", "write"];
 	return {
 		commands,
 		handlers,
+		tools,
 		registerCommand(name: string, command: any) { commands.set(name, command); },
-		registerTool() {},
+		registerTool(tool: any) { tools.set(tool.name, tool); activeTools.push(tool.name); },
 		registerShortcut() {},
 		getActiveTools() { return activeTools; },
 		setActiveTools(tools: string[]) { activeTools = tools; },
