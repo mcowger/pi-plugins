@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { StringEnum, type Api, type Model } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
@@ -8,11 +6,8 @@ import type {
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { makeApplyPatchTool } from "./apply-patch/tool.ts";
 import { isSupportedModel } from "./model-support.ts";
-import {
-	CODEX_APPLY_PATCH_FLAG,
-	resolveCodexExecutable,
-} from "./codex-binary.ts";
 import {
 	buildWebSearchInput,
 	boundedWebSearchDetails,
@@ -81,21 +76,6 @@ function notify(ctx: ExtensionCommandContext, message: string, level: "info" | "
 function modelInfo(model: PiModel | undefined): Record<string, unknown> {
 	return model ? { provider: model.provider, model: model.id, api: model.api } : {};
 }
-
-function pathsFromPatch(patch: string): string[] {
-	const paths = new Set<string>();
-	for (const line of patch.split("\n")) {
-		const path = line.match(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/)?.[1];
-		const move = line.match(/^\*\*\* Move to: (.+)$/)?.[1];
-		if (path) paths.add(path);
-		if (move) paths.add(move);
-	}
-	return [...paths];
-}
-
-const applyPatchSchema = Type.Object({
-	patch: Type.String({ description: "Complete *** Begin Patch ... *** End Patch payload" }),
-});
 
 const searchQuerySchema = Type.Object({
 	q: Type.String(),
@@ -264,22 +244,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		},
 	});
 
-	const applyPatch = {
-		name: "apply_patch",
-		label: "Apply Patch",
-		description: "Apply a complete OpenAI Codex patch. Do not wrap the patch in JSON.",
-		promptSnippet: "Apply an OpenAI Codex patch to add, update, move, or delete files",
-		parameters: applyPatchSchema,
-		constrainedSampling: { type: "grammar", variants: { openai_lark: readFileSync(fileURLToPath(new URL("../apply-patch.lark", import.meta.url)), "utf8") } },
-		executionMode: "sequential",
-		async execute(_toolCallId, { patch }, _signal, _onUpdate, ctx) {
-			const result = await pi.exec(resolveCodexExecutable(), [CODEX_APPLY_PATCH_FLAG, patch], { cwd: ctx.cwd, signal: _signal });
-			const output = [result.stdout.trimEnd(), result.stderr.trimEnd()].filter(Boolean).join("\n") || (result.code === 0 ? "Patch applied successfully." : `Codex apply_patch exited with status ${result.code}`);
-			if (result.code !== 0) throw new Error(output);
-			return { content: [{ type: "text", text: output }], details: { paths: pathsFromPatch(patch), output } };
-		},
-	} as ToolDefinition<typeof applyPatchSchema> & { constrainedSampling?: unknown };
-	pi.registerTool(applyPatch);
+	pi.registerTool(makeApplyPatchTool());
 
 	const webSearch: ToolDefinition<typeof webSearchSchema> = {
 		name: "web_search",

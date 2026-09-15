@@ -5,7 +5,7 @@ package:
 
 - Long context for GPT 5.5+ Responses API models.
 - Fast mode through `service_tier: "priority"`.
-- Native OpenAI Codex `apply_patch`.
+- Codex-compatible TypeScript `apply_patch`.
 - Optional Codex web search.
 - Hierarchical multi-agent collaboration with in-process Pi agent sessions.
 
@@ -30,9 +30,7 @@ To try the checkout for one run without installing it:
 pi --extension ./packages/pi-microgpt/index.ts
 ```
 
-The package includes the official `@openai/codex` dependency for the native
-`apply_patch` implementation. Pi installs the platform-specific Codex binary
-for the current machine.
+`apply_patch` is implemented in TypeScript and has no native binary dependency.
 
 ## Model support
 
@@ -147,8 +145,8 @@ The tool accepts the standard Codex patch format:
 ```
 
 It supports adding, updating, moving, and deleting files. Patches run
-sequentially and execute through the official Codex binary, not through a
-TypeScript reimplementation.
+sequentially through a TypeScript implementation of Codex-compatible parsing,
+context matching, and file operations.
 
 The tool is only enabled when Pi's normal file-editing tools were selected.
 If `edit` and `write` were disabled before the extension loaded, `apply_patch`

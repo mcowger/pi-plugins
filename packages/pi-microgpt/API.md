@@ -121,12 +121,18 @@ type ApplyPatchInput = {
 };
 ```
 
-The patch is passed to the official Codex executable. Success returns text content and details:
+The extension parses and applies the patch in TypeScript. Success returns text content and details:
 
 ```ts
 type ApplyPatchDetails = {
-  paths: string[]; // Paths found in Add/Delete/Update File and Move to directives
-  output: string;
+  files: {
+    kind: "add" | "update" | "delete";
+    path: string;
+    moveTo?: string;
+    added?: number;
+    removed?: number;
+    diff?: string;
+  }[];
 };
 ```
 

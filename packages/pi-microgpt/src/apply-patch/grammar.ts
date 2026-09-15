@@ -1,4 +1,5 @@
-start: begin_patch hunk+ end_patch
+// Unmodified grammar from openai/codex b04a2c2645. See NOTICE.
+export const CODEX_APPLY_PATCH_GRAMMAR = String.raw`start: begin_patch hunk+ end_patch
 begin_patch: "*** Begin Patch" LF
 end_patch: "*** End Patch" LF?
 
@@ -17,3 +18,4 @@ change_line: ("+" | "-" | " ") /(.*)/ LF
 eof_line: "*** End of File" LF
 
 %import common.LF
+`;

@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "bun:test";
 import {
 	FAST_SERVICE_TIER,
@@ -9,6 +12,8 @@ import {
 } from "../src/index.ts";
 import piMicroGpt from "../src/index.ts";
 import { installMultiAgentTools, validateSpawnModelOverride } from "../src/multiagents.ts";
+import { nodeFileSystem } from "../src/apply-patch/apply.ts";
+import { makeApplyPatchTool } from "../src/apply-patch/tool.ts";
 
 function model(overrides: Partial<{ provider: string; api: string; id: string; contextWindow: number }>) {
 		return { name: overrides.id ?? "test", baseUrl: "https://example.com", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, maxTokens: 1000, provider: "openai", api: "openai-responses", id: "gpt-5.5", contextWindow: 272_000, ...overrides } as any;
@@ -164,4 +169,34 @@ test("web search is off by default and can be enabled for the session", async ()
 	expect(JSON.parse(ctx.notifications[0]).enabled).toBe(false);
 	await pi.commands.get("web-search").handler("on", ctx);
 	expect(JSON.parse(ctx.notifications[1]).enabled).toBe(true);
+});
+
+
+test("apply_patch runs without the Codex native executable", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "pi-microgpt-apply-patch-"));
+	try {
+		const tool = makeApplyPatchTool({
+			fs: nodeFileSystem,
+			withFileQueue: async (_path, action) => action(),
+		});
+		const context = { cwd } as any;
+		const added = await tool.execute(
+			"call-1",
+			{ patch: "*** Begin Patch\n*** Add File: greeting.txt\n+hello\n*** End Patch" },
+			undefined,
+			undefined,
+			context,
+		);
+		await tool.execute(
+			"call-2",
+			{ patch: "*** Begin Patch\n*** Update File: greeting.txt\n@@\n-hello\n+hello, world\n*** End Patch" },
+			undefined,
+			undefined,
+			context,
+		);
+		expect(await readFile(join(cwd, "greeting.txt"), "utf8")).toBe("hello, world\n");
+		expect(added.content).toEqual([{ type: "text", text: "Success. Updated the following files:\nA greeting.txt" }]);
+	} finally {
+		await rm(cwd, { recursive: true, force: true });
+	}
 });
