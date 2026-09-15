@@ -194,4 +194,6 @@ test("registers the pinned upstream apply_patch tool", () => {
 	const tool = pi.tools.get("apply_patch");
 	expect(tool).toBeDefined();
 	expect(tool.parameters.properties).toHaveProperty("input");
+	expect(tool.parameters.properties).not.toHaveProperty("dryRun");
+	expect(tool.description).not.toContain("dryRun");
 });

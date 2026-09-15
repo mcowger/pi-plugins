@@ -21,6 +21,13 @@ export const FAST_SERVICE_TIER = "priority";
 export { isResponsesModel, isSupportedModel, RESPONSES_APIS, SUPPORTED_MODEL_SLUG } from "./model-support.ts";
 
 const replacedTools = ["edit", "write"];
+const applyPatchSchema = Type.Object({
+	input: Type.String({
+		description: "The complete patch text, from *** Begin Patch through *** End Patch.",
+	}),
+});
+const applyPatchDescription =
+	"Apply a Codex patch to workspace files. Supports additions, updates, deletions, moves, @@ context markers, and *** End of File.";
 
 type PiModel = Model<Api>;
 
@@ -244,7 +251,12 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool(createApplyPatchTool());
+	const upstreamApplyPatchTool = createApplyPatchTool();
+	pi.registerTool({
+		...upstreamApplyPatchTool,
+		description: applyPatchDescription,
+		parameters: applyPatchSchema,
+	});
 
 	const webSearch: ToolDefinition<typeof webSearchSchema> = {
 		name: "web_search",

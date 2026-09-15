@@ -120,7 +120,6 @@ Replaces Pi's active `edit` and `write` tools on supported models when file-edit
 ```ts
 type ApplyPatchInput = {
   input: string; // Complete Codex *** Begin Patch ... *** End Patch text
-  dryRun?: boolean; // Validate and preview without writing
 };
 ```
 
