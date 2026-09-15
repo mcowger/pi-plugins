@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
 	FAST_SERVICE_TIER,
 	MAX_CONTEXT_WINDOW,
-	isCodexModel,
 	isResponsesModel,
 	isSupportedModel,
 	shouldApplyFastMode,
@@ -31,10 +30,10 @@ test("Fast mode patches only the matching supported request", () => {
 	expect(shouldApplyFastMode(target, { model: "gpt-5.4" })).toBe(false);
 });
 
-test("Codex tools are restricted to Codex Responses models", () => {
-	expect(isCodexModel(model({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.5" }))).toBe(true);
-	expect(isCodexModel(model({ provider: "openai", api: "openai-responses", id: "gpt-5.5-codex" }))).toBe(true);
-	expect(isCodexModel(model({ provider: "openai", api: "openai-responses", id: "gpt-5.5" }))).toBe(false);
+test("Codex tools use the same shared model restriction", () => {
+	expect(isSupportedModel(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }))).toBe(true);
+	expect(isSupportedModel(model({ provider: "proxy", api: "openai-codex-responses", id: "gpt-6" }))).toBe(true);
+	expect(isSupportedModel(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.4-codex" }))).toBe(false);
 });
 
 function mockPi() {

@@ -36,11 +36,6 @@ export function isSupportedModel(model: PiModel | undefined): model is PiModel {
 	return model !== undefined && isResponsesModel(model) && SUPPORTED_MODEL_SLUG.test(model.id);
 }
 
-export function isCodexModel(model: PiModel | undefined): model is PiModel {
-	if (!isResponsesModel(model)) return false;
-	return model.provider === "openai-codex" || /(?:^|[-_.\/])codex(?:$|[-_.\/])/.test(model.id) || /(?:^|[-_.\/])deepseek-v4(?:-|$)/.test(model.id);
-}
-
 export function shouldApplyFastMode(model: PiModel | undefined, payload: unknown): boolean {
 	if (!isSupportedModel(model) || !payload || typeof payload !== "object") return false;
 	return (payload as { model?: unknown }).model === model.id;
@@ -154,7 +149,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		const active = new Set(pi.getActiveTools());
 		applyPatchSelected ??= active.has("apply_patch") || active.has("edit") || active.has("write");
 		webSearchSelected ??= true;
-		if (isCodexModel(model) && applyPatchSelected) {
+		if (isSupportedModel(model) && applyPatchSelected) {
 			active.add("apply_patch");
 			for (const tool of replacedTools) if (active.delete(tool)) removedTools.add(tool);
 		} else {
@@ -162,7 +157,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 			for (const tool of removedTools) active.add(tool);
 			removedTools.clear();
 		}
-		if (isCodexModel(model) && webSearchEnabled && webSearchSelected) active.add("web_search");
+		if (isSupportedModel(model) && webSearchEnabled && webSearchSelected) active.add("web_search");
 		else active.delete("web_search");
 		pi.setActiveTools([...active]);
 	}
@@ -237,12 +232,12 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 				return;
 			}
 			if (request.action === "status") {
-				emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isCodexModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+				emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
 				return;
 			}
 			webSearchEnabled = request.action === "on" || (request.action === "toggle" && !webSearchEnabled);
 			syncTools(ctx.model);
-			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isCodexModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
 		},
 	});
 
@@ -251,7 +246,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			const request = parseCommand(args);
 			const requestId = args.trim().startsWith("{") ? request?.requestId : args.trim() || undefined;
-			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isCodexModel(ctx.model), ...modelInfo(ctx.model) }, requestId);
+			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, requestId);
 		},
 	});
 
@@ -281,7 +276,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		async execute(_toolCallId, commands, signal, _onUpdate, rawCtx) {
 			const ctx = rawCtx as ToolContext;
 			const model = ctx.model;
-			if (!isCodexModel(model)) throw new Error("web_search requires a Codex Responses model");
+			if (!isSupportedModel(model)) throw new Error("web_search requires a supported Responses API model");
 			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 			if (!auth.ok || !auth.apiKey) throw new Error(auth.ok ? "Codex OAuth token is unavailable" : auth.error);
 			const result = await fetchCodexWebSearch({
