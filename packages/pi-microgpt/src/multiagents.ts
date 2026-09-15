@@ -80,7 +80,6 @@ export function installMultiAgentTools(pi: ExtensionAPI, isSupportedModel: Suppo
 		pi.setActiveTools([...active]);
 	}
 
-	syncTools(undefined);
 	pi.on("session_start", (_event, ctx) => {
 		team.start(ctx);
 		syncTools(ctx.model);

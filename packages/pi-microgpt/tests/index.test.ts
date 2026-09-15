@@ -49,6 +49,8 @@ test("multi-agent child overrides must satisfy the shared model restriction", ()
 test("multi-agent tools are active only for supported models", async () => {
 	const pi = mockPi();
 	installMultiAgentTools(pi as any, isSupportedModel);
+	expect(pi.tools.has("spawn_agent")).toBe(true);
+	pi.activateRuntime();
 	expect(pi.getActiveTools()).not.toContain("spawn_agent");
 	const start = pi.handlers.get("session_start");
 	const select = pi.handlers.get("model_select");
@@ -70,15 +72,23 @@ function mockPi() {
 	const handlers = new Map<string, any>();
 	const tools = new Map<string, any>();
 	let activeTools = ["edit", "write"];
+	let runtimeReady = false;
 	return {
 		commands,
 		handlers,
 		tools,
 		registerCommand(name: string, command: any) { commands.set(name, command); },
-		registerTool(tool: any) { tools.set(tool.name, tool); activeTools.push(tool.name); },
+		registerTool(tool: any) { tools.set(tool.name, tool); },
 		registerShortcut() {},
-		getActiveTools() { return activeTools; },
-		setActiveTools(tools: string[]) { activeTools = tools; },
+		activateRuntime() { runtimeReady = true; },
+		getActiveTools() {
+			if (!runtimeReady) throw new Error("Extension runtime not initialized");
+			return activeTools;
+		},
+		setActiveTools(tools: string[]) {
+			if (!runtimeReady) throw new Error("Extension runtime not initialized");
+			activeTools = tools;
+		},
 		on(name: string, handler: any) { handlers.set(name, handler); },
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
 	};
@@ -115,6 +125,7 @@ test("commands emit machine-readable JSON and support JSON requests", async () =
 test("web search is off by default and can be enabled for the session", async () => {
 	const pi = mockPi();
 	piMicroGpt(pi as any);
+	pi.activateRuntime();
 	const ctx = context(model({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.5" }));
 	await pi.commands.get("web-search").handler("status", ctx);
 	expect(JSON.parse(ctx.notifications[0]).enabled).toBe(false);
