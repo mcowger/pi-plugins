@@ -7,7 +7,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { createApplyPatchTool } from "@paulpham157/apply-patch/src/index.ts";
 import { Type } from "typebox";
-import { isSupportedModel } from "./model-support.ts";
+import { isFlexSupportedModel, isSupportedModel } from "./model-support.ts";
 import {
 	buildWebSearchInput,
 	boundedWebSearchDetails,
@@ -18,7 +18,21 @@ import {
 
 export const MAX_CONTEXT_WINDOW = 1_050_000;
 export const FAST_SERVICE_TIER = "priority";
-export { isResponsesModel, isSupportedModel, RESPONSES_APIS, SUPPORTED_MODEL_SLUG } from "./model-support.ts";
+export const FLEX_SERVICE_TIER = "flex";
+export type ServiceTierName = "off" | "priority" | "flex";
+export function resolveServiceTier(fastEnabled: boolean, flexEnabled: boolean): ServiceTierName {
+	if (fastEnabled) return FAST_SERVICE_TIER;
+	if (flexEnabled) return FLEX_SERVICE_TIER;
+	return "off";
+}
+export {
+	FLEX_SUPPORTED_MODEL_SLUGS,
+	isFlexSupportedModel,
+	isResponsesModel,
+	isSupportedModel,
+	RESPONSES_APIS,
+	SUPPORTED_MODEL_SLUG,
+} from "./model-support.ts";
 
 const replacedTools = ["edit", "write"];
 const applyPatchSchema = Type.Object({
@@ -36,9 +50,26 @@ export function shouldApplyFastMode(model: PiModel | undefined, payload: unknown
 	return (payload as { model?: unknown }).model === model.id;
 }
 
-export function withFastServiceTier(payload: unknown): unknown {
+export function withServiceTier(payload: unknown, tier: string): unknown {
 	if (!payload || typeof payload !== "object") return payload;
-	return { ...(payload as Record<string, unknown>), service_tier: FAST_SERVICE_TIER };
+	return { ...(payload as Record<string, unknown>), service_tier: tier };
+}
+
+export function withFastServiceTier(payload: unknown): unknown {
+	return withServiceTier(payload, FAST_SERVICE_TIER);
+}
+
+export function withFlexServiceTier(payload: unknown): unknown {
+	return withServiceTier(payload, FLEX_SERVICE_TIER);
+}
+
+export function shouldApplyServiceTier(model: PiModel | undefined, payload: unknown): boolean {
+	return shouldApplyFastMode(model, payload);
+}
+
+export function shouldApplyFlexMode(model: PiModel | undefined, payload: unknown): boolean {
+	if (!isFlexSupportedModel(model) || !payload || typeof payload !== "object") return false;
+	return (payload as { model?: unknown }).model === model.id;
 }
 
 type ParsedCommand = { action: string; requestId?: string };
@@ -113,7 +144,20 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 	let longContextModel: PiModel | undefined;
 	let previousContextWindow = 0;
 	let fastEnabled = false;
+	let flexEnabled = false;
 	let webSearchEnabled = false;
+
+	function activeServiceTier(): ServiceTierName {
+		return resolveServiceTier(fastEnabled, flexEnabled);
+	}
+
+	function tierPayload(model: PiModel | undefined): Record<string, unknown> {
+		return { serviceTier: activeServiceTier(), supported: isSupportedModel(model), ...modelInfo(model) };
+	}
+
+	function flexPayload(model: PiModel | undefined): Record<string, unknown> {
+		return { serviceTier: activeServiceTier(), supported: isFlexSupportedModel(model), ...modelInfo(model) };
+	}
 	let applyPatchSelected: boolean | undefined;
 	let webSearchSelected: boolean | undefined;
 	const removedTools = new Set<string>();
@@ -193,7 +237,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("fast", {
-		description: "Toggle Responses API Fast mode",
+		description: 'Toggle Responses API Fast mode (service_tier "priority")',
 		handler: async (args, ctx) => {
 			const request = parseCommand(args);
 			if (!request || !["toggle", "on", "off", "status"].includes(request.action)) {
@@ -201,11 +245,13 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 				return;
 			}
 			if (request.action === "status") {
-				emitCommand("fast", ctx, true, { enabled: fastEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+				emitCommand("fast", ctx, true, { enabled: fastEnabled, ...tierPayload(ctx.model) }, request.requestId);
 				return;
 			}
-			fastEnabled = request.action === "on" || (request.action === "toggle" && !fastEnabled);
-			emitCommand("fast", ctx, true, { enabled: fastEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+			const next = request.action === "on" || (request.action === "toggle" && !fastEnabled);
+			fastEnabled = next;
+			if (next) flexEnabled = false;
+			emitCommand("fast", ctx, true, { enabled: fastEnabled, ...tierPayload(ctx.model) }, request.requestId);
 		},
 	});
 
@@ -217,7 +263,38 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 				emitCommand("fast", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
 				return;
 			}
-			emitCommand("fast", ctx, true, { enabled: fastEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+			emitCommand("fast", ctx, true, { enabled: fastEnabled, ...tierPayload(ctx.model) }, request.requestId);
+		},
+	});
+
+	pi.registerCommand("flex", {
+		description: 'Toggle Responses API Flex mode (service_tier "flex", lower cost and slower)',
+		handler: async (args, ctx) => {
+			const request = parseCommand(args);
+			if (!request || !["toggle", "on", "off", "status"].includes(request.action)) {
+				emitCommand("flex", ctx, false, { error: "Expected on, off, status, or a JSON request." }, request?.requestId, "warning");
+				return;
+			}
+			if (request.action === "status") {
+				emitCommand("flex", ctx, true, { enabled: flexEnabled, ...flexPayload(ctx.model) }, request.requestId);
+				return;
+			}
+			const next = request.action === "on" || (request.action === "toggle" && !flexEnabled);
+			flexEnabled = next;
+			if (next) fastEnabled = false;
+			emitCommand("flex", ctx, true, { enabled: flexEnabled, ...flexPayload(ctx.model) }, request.requestId);
+		},
+	});
+
+	pi.registerCommand("flex-status", {
+		description: "Report Flex mode as JSON",
+		handler: async (args, ctx) => {
+			const request = parseStatusRequest(args);
+			if (!request || request.action !== "status") {
+				emitCommand("flex", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
+				return;
+			}
+			emitCommand("flex", ctx, true, { enabled: flexEnabled, ...flexPayload(ctx.model) }, request.requestId);
 		},
 	});
 
@@ -288,6 +365,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		setLongContext(false, longContextModel);
 		fastEnabled = false;
+		flexEnabled = false;
 		webSearchEnabled = false;
 		syncTools(ctx.model);
 	});
@@ -299,7 +377,8 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		setLongContext(false, longContextModel);
 	});
 	pi.on("before_provider_request", (event, ctx) => {
-		if (fastEnabled && shouldApplyFastMode(ctx.model, event.payload)) return withFastServiceTier(event.payload);
+		if (fastEnabled && shouldApplyFastMode(ctx.model, event.payload)) return withServiceTier(event.payload, FAST_SERVICE_TIER);
+		if (flexEnabled && shouldApplyFlexMode(ctx.model, event.payload)) return withServiceTier(event.payload, FLEX_SERVICE_TIER);
 		return undefined;
 	});
 }

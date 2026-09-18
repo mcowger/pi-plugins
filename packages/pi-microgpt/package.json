@@ -1,7 +1,7 @@
 {
 	"name": "@mcowger/pi-microgpt",
 	"version": "0.1.0",
-	"description": "GPT-only multi-agent tools, long context, Fast mode, and Codex utilities for Pi",
+	"description": "GPT-only multi-agent tools, long context, Fast/Flex modes, and Codex utilities for Pi",
 	"license": "MIT",
 	"type": "module",
 	"files": ["src", "index.ts", "README.md", "API.md", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES"],

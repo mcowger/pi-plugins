@@ -4,7 +4,7 @@
 package:
 
 - Long context for GPT 5.5+ Responses API models.
-- Fast mode through `service_tier: "priority"`.
+- Fast mode through `service_tier: "priority"` and Flex mode through `service_tier: "flex"`.
 - Codex-compatible TypeScript `apply_patch`.
 - Optional Codex web search.
 - Optional Codex subagent tools.
@@ -49,7 +49,8 @@ an extension update. The extension does not claim that every future model has
 a 1.05M context window. Check the model's documentation before using long
 context with a new slug.
 
-The same check controls all features. The provider does not matter, and the
+The same check controls all features except Flex mode, which additionally
+requires a flex-supported model (see below). The provider does not matter, and the
 model ID does not need to contain `codex`.
 
 ## Multi-agent tools
@@ -138,6 +139,40 @@ model's ID.
 
 Unsupported models are left unchanged.
 
+## Flex mode
+
+Flex mode is off by default and is session-only. When enabled, supported
+Responses API payloads receive:
+
+```json
+{
+  "service_tier": "flex"
+}
+```
+
+Flex trades slower processing for lower cost. It is mutually exclusive with
+Fast mode: enabling one disables the other. The patch only applies when the
+request's `model` field matches the active model's ID.
+
+```text
+/flex
+/flex on
+/flex off
+/flex status
+/flex-status
+```
+
+Flex follows OpenAI's flex SKU, which is narrower than Fast mode. Within this
+plugin's GPT 5.5+ scope, flex applies to `gpt-6-astra` and `gpt-5.6-sol`,
+`gpt-5.6-terra`, and `gpt-5.6-luna` (plus dated snapshots and suffixes).
+`gpt-5.5`, `gpt-5.4` and earlier, `gpt-5.6-cyber`, `gpt-4.1`, fine-tuned
+models, and embeddings are left unchanged, and `/flex status` reports
+`supported: false` for them. (`o3`, `o4-mini`, and the `gpt-5` family support
+flex per OpenAI but sit outside this plugin's GPT 5.5+ scope.) Flex is in
+beta and OpenAI lists supported models on its pricing page; sending flex to
+an unsupported model returns a server `400`, which is why the plugin omits
+the parameter there instead of failing the request.
+
 ## `apply_patch`
 
 On a supported Codex model, the extension replaces Pi's active `edit` and
@@ -196,6 +231,7 @@ The notification message is a JSON object with this shape:
   "success": true,
   "requestId": "req-42",
   "enabled": true,
+  "serviceTier": "priority",
   "supported": true,
   "provider": "openai-codex",
   "model": "gpt-5.6-sol",
@@ -203,12 +239,19 @@ The notification message is a JSON object with this shape:
 }
 ```
 
+`fast` and `flex` responses include `serviceTier`, the active tier across
+both commands: `"priority"`, `"flex"`, or `"off"`. `enabled` reports the
+queried command's own switch, so `/fast status` while Flex is active returns
+`enabled: false` with `serviceTier: "flex"`.
+
 Commands accept JSON arguments when an adapter needs a request ID or a stable
 request format:
 
 ```text
 /fast {"action":"on","requestId":"fast-1"}
 /fast {"action":"status","requestId":"fast-2"}
+/flex {"action":"on","requestId":"flex-1"}
+/flex {"action":"status","requestId":"flex-2"}
 /long-context {"action":"on","requestId":"context-1"}
 /web-search {"action":"on","requestId":"search-1"}
 ```
@@ -223,12 +266,13 @@ aliases accept a plain request ID too:
 
 ```text
 /fast-status req-3
-/long-context-status req-4
-/web-search-status req-5
+/flex-status req-4
+/long-context-status req-5
+/web-search-status req-6
 ```
 
-The plugin does not persist long-context, Fast mode, web-search, or subagent state.
-Every session starts with all four disabled.
+The plugin does not persist long-context, Fast mode, Flex mode, web-search, or subagent state.
+Every session starts with all five disabled.
 
 ## Development
 

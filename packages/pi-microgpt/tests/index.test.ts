@@ -1,11 +1,18 @@
 import { expect, test } from "bun:test";
 import {
 	FAST_SERVICE_TIER,
+	FLEX_SERVICE_TIER,
 	MAX_CONTEXT_WINDOW,
+	isFlexSupportedModel,
 	isResponsesModel,
 	isSupportedModel,
+	resolveServiceTier,
 	shouldApplyFastMode,
+	shouldApplyFlexMode,
+	shouldApplyServiceTier,
 	withFastServiceTier,
+	withFlexServiceTier,
+	withServiceTier,
 } from "../src/index.ts";
 import piMicroGpt from "../src/index.ts";
 import { installMultiAgentTools, validateSpawnModelOverride } from "../src/multiagents.ts";
@@ -164,7 +171,7 @@ test("status aliases return JSON errors for malformed JSON requests", async () =
 	const pi = mockPi();
 	piMicroGpt(pi as any);
 	const ctx = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
-	for (const name of ["long-context-status", "fast-status", "web-search-status"]) {
+	for (const name of ["long-context-status", "fast-status", "flex-status", "web-search-status"]) {
 		await pi.commands.get(name).handler('{"action":"on","requestId":"invalid-1"}', ctx);
 		const wrongAction = JSON.parse(ctx.notifications.at(-1)!);
 		expect(wrongAction).toMatchObject({ type: "pi-microgpt.response", success: false, requestId: "invalid-1" });
@@ -187,6 +194,90 @@ test("web search is off by default and can be enabled for the session", async ()
 	expect(JSON.parse(ctx.notifications[1]).enabled).toBe(true);
 });
 
+
+test("flex support follows OpenAI's flex SKU within plugin scope", () => {
+	const flexModels = [
+		"gpt-6-astra",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+		"gpt-5.6-sol-2026-01-01",
+		"gpt-5.6-luna-codex",
+		"GPT-5.6-TERRA",
+	];
+	for (const id of flexModels) {
+		expect(isFlexSupportedModel(model({ provider: "proxy", api: "openai-responses", id }))).toBe(true);
+	}
+	const notFlex = [
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.4-mini",
+		"gpt-5.2",
+		"gpt-5.1",
+		"gpt-5.6-cyber",
+		"gpt-4.1",
+		"gpt-4o",
+		"o1",
+		"o3-mini",
+	];
+	for (const id of notFlex) {
+		expect(isFlexSupportedModel(model({ provider: "proxy", api: "openai-responses", id }))).toBe(false);
+	}
+	// o3, o4-mini, and the gpt-5 family support flex per OpenAI, but sit
+	// outside this plugin's GPT-5.5+ scope.
+	for (const id of ["o3", "o4-mini", "gpt-5", "gpt-5-mini", "gpt-5-nano"]) {
+		expect(isFlexSupportedModel(model({ provider: "proxy", api: "openai-responses", id }))).toBe(false);
+	}
+	expect(isFlexSupportedModel(model({ provider: "proxy", api: "openai-completions", id: "gpt-5.6-sol" }))).toBe(false);
+});
+
+test("flex mode patches with the flex tier and stays exclusive with fast mode", async () => {
+	expect(FLEX_SERVICE_TIER).toBe("flex");
+	expect(resolveServiceTier(false, false)).toBe("off");
+	expect(resolveServiceTier(true, false)).toBe(FAST_SERVICE_TIER);
+	expect(resolveServiceTier(false, true)).toBe(FLEX_SERVICE_TIER);
+	expect(resolveServiceTier(true, true)).toBe(FAST_SERVICE_TIER);
+	expect(withServiceTier({ model: "gpt-5.6-sol" }, FLEX_SERVICE_TIER)).toEqual({ model: "gpt-5.6-sol", service_tier: "flex" });
+	expect(withFlexServiceTier({ model: "gpt-5.6-sol" })).toEqual({ model: "gpt-5.6-sol", service_tier: "flex" });
+
+	const target = model({ provider: "proxy", api: "openai-responses", id: "gpt-5.6-sol" });
+	expect(shouldApplyServiceTier(target, { model: target.id })).toBe(true);
+	expect(shouldApplyFlexMode(target, { model: target.id })).toBe(true);
+	expect(shouldApplyFlexMode(target, { model: "other" })).toBe(false);
+	const withoutFlex = model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" });
+	expect(shouldApplyFlexMode(withoutFlex, { model: withoutFlex.id })).toBe(false);
+	expect(shouldApplyFastMode(withoutFlex, { model: withoutFlex.id })).toBe(true);
+
+	const pi = mockPi();
+	piMicroGpt(pi as any);
+	pi.activateRuntime();
+	const ctx = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.6-sol" }));
+	await pi.commands.get("flex").handler("status", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: false, serviceTier: "off", supported: true });
+	await pi.commands.get("flex").handler('{"action":"on","requestId":"flex-1"}', ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: true, serviceTier: "flex", supported: true, requestId: "flex-1" });
+	await pi.commands.get("fast").handler("status", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "fast", enabled: false, serviceTier: "flex" });
+	await pi.commands.get("fast").handler("on", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "fast", enabled: true, serviceTier: "priority" });
+	await pi.commands.get("flex").handler("status", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: false, serviceTier: "priority" });
+	await pi.commands.get("fast").handler("off", ctx);
+	await pi.commands.get("flex").handler("on", ctx);
+	await pi.commands.get("flex-status").handler("", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: true, serviceTier: "flex", supported: true });
+	await pi.handlers.get("session_start")({}, ctx);
+	await pi.commands.get("flex").handler("status", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: false, serviceTier: "off" });
+
+	const legacy = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
+	await pi.commands.get("flex").handler("status", legacy);
+	expect(JSON.parse(legacy.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: false, supported: false });
+	await pi.commands.get("flex").handler("on", legacy);
+	expect(JSON.parse(legacy.notifications.at(-1)!)).toMatchObject({ command: "flex", enabled: true, supported: false });
+	await pi.commands.get("fast").handler("status", legacy);
+	expect(JSON.parse(legacy.notifications.at(-1)!)).toMatchObject({ command: "fast", supported: true });
+});
 
 test("registers the pinned upstream apply_patch tool", () => {
 	const pi = mockPi();

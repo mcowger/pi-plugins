@@ -26,11 +26,13 @@ The extension reports command results with Pi's `ui.notify` API. In RPC mode, th
 
 ### Request arguments
 
-The `fast`, `long-context`, `web-search`, and `subagents` commands accept a plain action or a JSON object:
+The `fast`, `flex`, `long-context`, `web-search`, and `subagents` commands accept a plain action or a JSON object:
 
 ```text
 /fast on
 /fast {"action":"on","requestId":"fast-1"}
+/flex on
+/flex {"action":"on","requestId":"flex-1"}
 ```
 
 JSON requests have this shape:
@@ -50,6 +52,9 @@ The `*-status` aliases accept no argument, a plain correlation ID, or a JSON sta
 /fast-status
 /fast-status fast-2
 /fast-status {"action":"status","requestId":"fast-3"}
+/flex-status
+/flex-status flex-2
+/flex-status {"action":"status","requestId":"flex-3"}
 ```
 
 A JSON request to a status alias must use `"action":"status"`.
@@ -61,10 +66,11 @@ The JSON string in the RPC notification's `message` follows this shape:
 ```ts
 type CommandResponse = {
   type: "pi-microgpt.response";
-  command: "fast" | "long-context" | "web-search" | "subagents";
+  command: "fast" | "flex" | "long-context" | "web-search" | "subagents";
   success: boolean;
   requestId?: string;
   enabled?: boolean;
+  serviceTier?: "priority" | "flex" | "off";
   supported?: boolean;
   provider?: string;
   model?: string;
@@ -96,8 +102,10 @@ Example:
 
 | Command | Behavior |
 | --- | --- |
-| `fast` | Toggles or sets Fast mode. `status` reports its session setting. |
-| `fast-status` | Reports Fast mode. |
+| `fast` | Toggles or sets Fast mode (`service_tier: "priority"`). Enabling it disables Flex mode. `status` reports the command switch plus the active `serviceTier`. |
+| `fast-status` | Reports Fast mode and the active `serviceTier`. |
+| `flex` | Toggles or sets Flex mode (`service_tier: "flex"`). Enabling it disables Fast mode. `status` reports the command switch plus the active `serviceTier`. `supported` is true only for flex-SKU models (see below); other models are left unpatched. |
+| `flex-status` | Reports Flex mode and the active `serviceTier`. |
 | `long-context` | Toggles or sets long context. Repeating `on` or `off` is safe. |
 | `long-context-status` | Reports long-context state and the current context window. |
 | `web-search` | Toggles or sets web search. |
@@ -105,9 +113,9 @@ Example:
 | `subagents` | Toggles or sets the subagent tools. |
 | `subagents-status` | Reports the subagent-tools setting. |
 
-All four settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast mode adds `service_tier: "priority"` only to requests for the active supported model. Web search and subagent tools are callable only on a supported model; their `enabled` fields report the session setting, while `supported` reports model eligibility.
+All five settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast and Flex modes are mutually exclusive and add their `service_tier` only to requests for the active supported model. Web search and subagent tools are callable only on a supported model; their `enabled` fields report the session setting, while `supported` reports model eligibility.
 
-Supported models use the `openai-responses` or `openai-codex-responses` API and a GPT 5.5+ model ID. Provider names do not affect eligibility.
+Supported models use the `openai-responses` or `openai-codex-responses` API and a GPT 5.5+ model ID. Provider names do not affect eligibility. Flex mode narrows this further to OpenAI's flex SKU: within plugin scope, `gpt-6-astra` and `gpt-5.6-sol`/`terra`/`luna` (plus snapshots and suffixes). `gpt-5.5`, `gpt-5.4` and earlier, `gpt-5.6-cyber`, `gpt-4.1`, fine-tuned models, and embeddings report `supported: false` for `flex`.
 
 ## Tools
 
@@ -208,9 +216,9 @@ type AgentStatus =
   | { errored: string };
 ```
 
-## Fast-mode provider request
+## Service-tier provider request
 
-When enabled, the `before_provider_request` hook returns the request payload with `service_tier` set to `"priority"` if its `model` matches the active supported model. Other payloads are unchanged.
+When Fast or Flex mode is enabled, the `before_provider_request` hook returns the request payload with `service_tier` set to `"priority"` (Fast) or `"flex"` (Flex) if its `model` matches the active supported model. Flex additionally requires a flex-SKU model, so enabling `/flex` on e.g. `gpt-5.5` leaves payloads unchanged instead of provoking a server `400`. Fast wins if both switches are somehow set. Other payloads are unchanged.
 
 ## Web-search HTTP contract
 
