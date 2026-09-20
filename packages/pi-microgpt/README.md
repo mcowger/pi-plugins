@@ -192,7 +192,9 @@ The tool accepts the standard Codex patch format:
 
 It supports adding, updating, moving, and deleting files. Patches run
 sequentially through a TypeScript implementation of Codex-compatible parsing,
-context matching, and file operations.
+context matching, and file operations. Patch paths are resolved to real absolute
+locations before delegating, so they are not confined to the session working
+directory; access policy is enforced separately.
 
 The tool is only enabled when Pi's normal file-editing tools were selected.
 If `edit` and `write` were disabled before the extension loaded, `apply_patch`

@@ -132,7 +132,11 @@ type ApplyPatchInput = {
 ```
 
 The extension delegates parsing, validation, application, and rendering to the pinned
-`@paulpham157/apply-patch@0.3.0` dependency. Success returns text content and details:
+`@paulpham157/apply-patch@0.3.1` dependency, wrapped to resolve every patch path to a real
+absolute location before delegating. The upstream session-cwd confinement (and its
+symlink-component rejection) therefore does not apply: absolute paths, `..` escapes, and
+symlinked paths are all permitted. Access policy is enforced by a separate mechanism.
+Success returns text content and details:
 
 ```ts
 type ApplyPatchDetails = {

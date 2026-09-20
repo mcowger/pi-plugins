@@ -5,7 +5,7 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { createApplyPatchTool } from "@paulpham157/apply-patch/src/index.ts";
+import { createUnrestrictedApplyPatchTool } from "./apply-patch.ts";
 import { Type } from "typebox";
 import { isFlexSupportedModel, isSupportedModel } from "./model-support.ts";
 import {
@@ -41,7 +41,7 @@ const applyPatchSchema = Type.Object({
 	}),
 });
 const applyPatchDescription =
-	"Apply a Codex patch to workspace files. Supports additions, updates, deletions, moves, @@ context markers, and *** End of File.";
+	"Apply a Codex patch to files anywhere on the filesystem. Paths may be absolute or relative to the session working directory; .. escapes are allowed and symlinks are followed. Supports additions, updates, deletions, moves, @@ context markers, and *** End of File.";
 
 type PiModel = Model<Api>;
 
@@ -328,7 +328,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		},
 	});
 
-	const upstreamApplyPatchTool = createApplyPatchTool();
+	const upstreamApplyPatchTool = createUnrestrictedApplyPatchTool();
 	pi.registerTool({
 		...upstreamApplyPatchTool,
 		description: applyPatchDescription,

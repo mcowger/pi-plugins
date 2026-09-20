@@ -45,7 +45,7 @@
       "name": "@mcowger/pi-microgpt",
       "version": "0.1.0",
       "dependencies": {
-        "@paulpham157/apply-patch": "0.3.0",
+        "@paulpham157/apply-patch": "0.3.1",
         "pi-multiagents-v2": "0.1.2",
         "typebox": "^1.3.13",
       },
@@ -246,7 +246,7 @@
 
     "@mcowger/pi-suppress-providers": ["@mcowger/pi-suppress-providers@workspace:packages/pi-suppress-providers"],
 
-    "@paulpham157/apply-patch": ["@paulpham157/apply-patch@0.3.0", "", { "dependencies": { "diff": "^9.0.0" }, "peerDependencies": { "@earendil-works/pi-agent-core": ">=0.85.1", "@earendil-works/pi-ai": ">=0.85.1", "@earendil-works/pi-coding-agent": ">=0.85.1", "@earendil-works/pi-tui": ">=0.85.1", "typebox": "*" } }, "sha512-3o0YBAJcfXvN10d0Ng/DUksjrJfHMweZcynMgpajjZ5j9CBpjzG9h7jePPMghWgtmL10qp0IHURHYMxn26MOhQ=="],
+    "@paulpham157/apply-patch": ["@paulpham157/apply-patch@0.3.1", "", { "dependencies": { "diff": "^9.0.0" }, "peerDependencies": { "@earendil-works/pi-agent-core": ">=0.85.1", "@earendil-works/pi-ai": ">=0.85.1", "@earendil-works/pi-coding-agent": ">=0.85.1", "@earendil-works/pi-tui": ">=0.85.1", "typebox": "*" } }, "sha512-qqO0zcG0hW7lTdst0GXw+85ex3cJ+T94iLic4R3mpPakwrp1B/jOAU1cov72fiQBSyf9NJO2eRj9BeJdNz41Rw=="],
 
     "@protobufjs/aspromise": ["@protobufjs/aspromise@1.1.2", "", {}, "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ=="],
 
