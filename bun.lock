@@ -46,7 +46,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@paulpham157/apply-patch": "0.3.1",
-        "pi-multiagents-v2": "0.1.2",
       },
       "devDependencies": {
         "@biomejs/biome": "2.5.1",
@@ -412,8 +411,6 @@
     "partial-json": ["partial-json@0.1.7", "", {}, "sha512-Njv/59hHaokb/hRUjce3Hdv12wd60MtM9Z5Olmn+nehe0QDAsRtRbJPvJ0Z91TusF0SuZRIvnM+S4l6EIP8leA=="],
 
     "path-key": ["path-key@3.1.1", "", {}, "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q=="],
-
-    "pi-multiagents-v2": ["pi-multiagents-v2@0.1.2", "", { "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" } }, "sha512-IE4MW2fhWj4N3gPBZI3W2fuFhynkn111mcZZK/iFjlEyDCtDFDHPpoEfcZsQsJf0a0wajyXifipiLwUAShiXog=="],
 
     "proper-lockfile": ["proper-lockfile@4.1.2", "", { "dependencies": { "graceful-fs": "^4.2.4", "retry": "^0.12.0", "signal-exit": "^3.0.2" } }, "sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA=="],
 

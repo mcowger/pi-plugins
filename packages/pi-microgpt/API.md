@@ -26,7 +26,7 @@ The extension reports command results with Pi's `ui.notify` API. In RPC mode, th
 
 ### Request arguments
 
-The `fast`, `flex`, `long-context`, `web-search`, and `subagents` commands accept a plain action or a JSON object:
+The `fast`, `flex`, `long-context`, and `web-search` commands accept a plain action or a JSON object:
 
 ```text
 /fast on
@@ -66,7 +66,7 @@ The JSON string in the RPC notification's `message` follows this shape:
 ```ts
 type CommandResponse = {
   type: "pi-microgpt.response";
-  command: "fast" | "flex" | "long-context" | "web-search" | "subagents";
+  command: "fast" | "flex" | "long-context" | "web-search";
   success: boolean;
   requestId?: string;
   enabled?: boolean;
@@ -110,10 +110,8 @@ Example:
 | `long-context-status` | Reports long-context state and the current context window. |
 | `web-search` | Toggles or sets web search. |
 | `web-search-status` | Reports the web-search setting. |
-| `subagents` | Toggles or sets the subagent tools. |
-| `subagents-status` | Reports the subagent-tools setting. |
 
-All five settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast and Flex modes are mutually exclusive and add their `service_tier` only to requests for the active supported model. Web search and subagent tools are callable only on a supported model; their `enabled` fields report the session setting, while `supported` reports model eligibility.
+All four settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast and Flex modes are mutually exclusive and add their `service_tier` only to requests for the active supported model. Web search is callable only on a supported model; its `enabled` field reports the session setting, while `supported` reports model eligibility.
 
 Supported models use the `openai-responses` or `openai-codex-responses` API and a GPT 5.5+ model ID. Provider names do not affect eligibility. Flex mode narrows this further to OpenAI's flex SKU: within plugin scope, `gpt-6-astra` and `gpt-5.6-sol`/`terra`/`luna` (plus snapshots and suffixes). `gpt-5.5`, `gpt-5.4` and earlier, `gpt-5.6-cyber`, `gpt-4.1`, fine-tuned models, and embeddings report `supported: false` for `flex`.
 
@@ -190,34 +188,6 @@ type WebSearchDetails = {
   rawOutput: string; // Truncated at 50,000 UTF-8 bytes
   results?: unknown[];
 };
-```
-
-### Multi-agent tools
-
-These six tools are available after `/subagents on` on supported models. Their successful `content[0].text` is a pretty-printed JSON encoding of the same object stored in `details`.
-
-| Tool | Input | Success details |
-| --- | --- | --- |
-| `spawn_agent` | `{ task_name: string, message: string, fork_turns?: string, agent_type?: string, model?: string, reasoning_effort?: ThinkingLevel }` | `{ task_name: string, status: AgentStatus }` |
-| `send_message` | `{ target: string, message: string }` | `{ target: string, queued: true }` |
-| `followup_task` | `{ target: string, message: string }` | `{ target: string, status: AgentStatus }` |
-| `wait_agent` | `{ timeout_ms?: number }` | `{ message: string, timed_out: boolean }` |
-| `list_agents` | `{ path_prefix?: string }` | `{ agents: { agent_name: string, agent_status: AgentStatus }[] }` |
-| `interrupt_agent` | `{ target: string }` | `{ previous_status: AgentStatus }` |
-
-`ThinkingLevel` is `"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`. `fork_turns` is `"none"`, `"all"` (the default), or a positive integer encoded as a string. Full-history forks (`"all"`) cannot set `model` or `reasoning_effort`. A model override can be `provider/model` or a model ID for the inherited provider; it must resolve to a supported GPT 5.5+ Responses API model. Agent names use lowercase letters, digits, and underscores. `target` accepts a relative child name or canonical path.
-
-`AgentStatus` is:
-
-```ts
-type AgentStatus =
-  | "pending_init"
-  | "running"
-  | "interrupted"
-  | "shutdown"
-  | "not_found"
-  | { completed: string | null }
-  | { errored: string };
 ```
 
 ## Service-tier provider request

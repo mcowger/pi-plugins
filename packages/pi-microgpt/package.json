@@ -1,7 +1,7 @@
 {
 	"name": "@mcowger/pi-microgpt",
 	"version": "0.1.0",
-	"description": "GPT-only multi-agent tools, long context, Fast/Flex modes, and Codex utilities for Pi",
+	"description": "GPT-only long context, Fast/Flex modes, and Codex utilities for Pi",
 	"license": "MIT",
 	"type": "module",
 	"files": ["src", "index.ts", "README.md", "API.md", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES"],
@@ -13,7 +13,7 @@
 		"format:check": "bunx biome check index.ts src tests",
 		"test": "bun test"
 	},
-	"keywords": ["pi-package", "pi", "codex", "gpt", "multi-agent", "apply-patch", "web-search"],
+	"keywords": ["pi-package", "pi", "codex", "gpt", "apply-patch", "web-search"],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/mcowger/pi-plugins.git",
@@ -26,8 +26,7 @@
 		"@earendil-works/pi-tui": ">=0.85.1"
 	},
 	"dependencies": {
-		"@paulpham157/apply-patch": "0.3.1",
-		"pi-multiagents-v2": "0.1.2"
+		"@paulpham157/apply-patch": "0.3.1"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.1",
@@ -39,5 +38,5 @@
 		"bun-types": "1.3.14",
 		"typescript": "^6.0.3"
 	},
-	"pi": {"extensions": ["./index.ts", "./src/multiagents-entry.ts"]}
+	"pi": {"extensions": ["./index.ts"]}
 }
