@@ -1,4 +1,4 @@
-import { StringEnum, type Api, type Model } from "@earendil-works/pi-ai";
+import { StringEnum, Type, type Api, type Model } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -6,7 +6,6 @@ import type {
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createUnrestrictedApplyPatchTool } from "./apply-patch.ts";
-import { Type } from "typebox";
 import { isFlexSupportedModel, isSupportedModel } from "./model-support.ts";
 import {
 	buildWebSearchInput,
