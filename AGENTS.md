@@ -25,3 +25,4 @@ workflow selects the package from the tag and publishes only that package.
 
 - `packages/pi-control`: action-based tool-call policy extension and skills.
 - `packages/pi-suppress-providers`: provider visibility extension.
+- `packages/super-agents-pi`: in-process user-defined sub-agents extension.

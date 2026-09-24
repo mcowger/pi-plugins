@@ -8,14 +8,15 @@
 	],
 	"scripts": {
 		"postinstall": "command -v lefthook >/dev/null 2>&1 && lefthook install || true",
-		"check": "bun run check:pi-control && bun run check:pi-suppress-providers && bun run check:pi-microgpt",
+		"check": "bun run check:pi-control && bun run check:pi-suppress-providers && bun run check:pi-microgpt && bun run check:super-agents-pi",
 		"check:pi-control": "(cd packages/pi-control && bun run check)",
 		"check:pi-suppress-providers": "(cd packages/pi-suppress-providers && bun run check)",
 		"check:pi-microgpt": "(cd packages/pi-microgpt && bun run check)",
-		"test": "bun --cwd packages/pi-control test && bun --cwd packages/pi-suppress-providers test && bun --cwd packages/pi-microgpt test",
-		"lint": "(cd packages/pi-control && bun run lint) && (cd packages/pi-suppress-providers && bun run lint) && (cd packages/pi-microgpt && bun run lint)",
-		"format": "(cd packages/pi-control && bun run format) && (cd packages/pi-suppress-providers && bun run format) && (cd packages/pi-microgpt && bun run format)",
-		"format:check": "(cd packages/pi-control && bun run format:check) && (cd packages/pi-suppress-providers && bun run format:check) && (cd packages/pi-microgpt && bun run format:check)"
+		"check:super-agents-pi": "(cd packages/super-agents-pi && bun run check)",
+		"test": "bun --cwd packages/pi-control test && bun --cwd packages/pi-suppress-providers test && bun --cwd packages/pi-microgpt test && bun --cwd packages/super-agents-pi test",
+		"lint": "(cd packages/pi-control && bun run lint) && (cd packages/pi-suppress-providers && bun run lint) && (cd packages/pi-microgpt && bun run lint) && (cd packages/super-agents-pi && bun run lint)",
+		"format": "(cd packages/pi-control && bun run format) && (cd packages/pi-suppress-providers && bun run format) && (cd packages/pi-microgpt && bun run format) && (cd packages/super-agents-pi && bun run format)",
+		"format:check": "(cd packages/pi-control && bun run format:check) && (cd packages/pi-suppress-providers && bun run format:check) && (cd packages/pi-microgpt && bun run format:check) && (cd packages/super-agents-pi && bun run format:check)"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.1",
