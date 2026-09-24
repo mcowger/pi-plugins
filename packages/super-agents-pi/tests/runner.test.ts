@@ -298,6 +298,38 @@ describe("resolveModelChoice", () => {
 		).toThrow("model 'anthropic/does-not-exist' not found");
 	});
 
+	it("suggests an extension-loading fix when the provider itself is unregistered", () => {
+		expect(() =>
+			resolveModelChoice({
+				agent: makeAgent({ model: "plexus/muse-spark" }),
+				task: makeTask(),
+				parentModel: makeModel(),
+				parentThinking: undefined,
+				find: () => undefined,
+				hasProvider: () => false,
+				listProviders: () => ["anthropic", "openai"],
+			}),
+		).toThrow(
+			/provider 'plexus' is not registered.*Providers registered in this session: anthropic, openai.*pi extension.*--no-extensions/s,
+		);
+	});
+
+	it("suggests a typo fix when the provider is registered but the model id is not", () => {
+		expect(() =>
+			resolveModelChoice({
+				agent: makeAgent({ model: "anthropic/does-not-exist" }),
+				task: makeTask(),
+				parentModel: makeModel(),
+				parentThinking: undefined,
+				find: () => undefined,
+				hasProvider: () => true,
+				listProviders: () => ["anthropic"],
+			}),
+		).toThrow(
+			"provider 'anthropic' is registered but has no model 'does-not-exist'. Check for a typo in the model id.",
+		);
+	});
+
 	it("inherits the parent model when neither task nor agent specify one", () => {
 		const parentModel = makeModel({ id: "inherited" });
 		const result = resolveModelChoice({
@@ -499,6 +531,22 @@ describe("runChild", () => {
 
 		expect(result.status).toBe("failed");
 		expect(result.error).toBe("provider exploded");
+	});
+
+	it("reports an actionable error when the agent's pinned model's provider is unregistered", async () => {
+		const agent = makeAgent({ model: "plexus/muse-spark" });
+		const ctx = makeCtx({
+			modelRegistry: {
+				find: () => undefined,
+				getProvider: () => undefined,
+				getRegisteredProviderIds: () => ["anthropic"],
+			},
+		});
+		const result = await runChild(baseOptions({ agent, ctx }));
+
+		expect(result.status).toBe("failed");
+		expect(result.error).toContain("provider 'plexus' is not registered in this session");
+		expect(result.error).toContain("--no-extensions");
 	});
 
 	it("never throws even when createAgentSession itself rejects", async () => {

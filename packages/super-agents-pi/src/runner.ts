@@ -17,14 +17,43 @@ import type { AgentDefinition, RunUsage, TaskInput } from "./types.ts";
 // biome-ignore lint/suspicious/noExplicitAny: mirrors the SDK's own Model<any> typing (Api is not exposed to extensions)
 type AnyModel = Model<any>;
 
+/**
+ * Builds an actionable error for an unresolvable `provider/id` model string. Distinguishes
+ * "provider unknown in this session" (likely an extension whose provider registration never
+ * reached this session) from "provider known, model id unknown" (likely a typo), since the two
+ * have very different fixes.
+ */
+function describeModelNotFound(
+	modelStr: string,
+	provider: string,
+	id: string,
+	hasProvider: ((provider: string) => boolean) | undefined,
+	listProviders: (() => readonly string[]) | undefined,
+): string {
+	if (hasProvider === undefined) return `model '${modelStr}' not found`;
+	if (hasProvider(provider)) {
+		return `model '${modelStr}' not found: provider '${provider}' is registered but has no model '${id}'. Check for a typo in the model id.`;
+	}
+	const known = listProviders?.() ?? [];
+	const knownText = known.length > 0 ? ` Providers registered in this session: ${known.join(", ")}.` : "";
+	return (
+		`model '${modelStr}' not found: provider '${provider}' is not registered in this session.${knownText} ` +
+		`If '${provider}' is supplied by a pi extension, make sure that extension is loaded in the parent session ` +
+		"(the parent must not be started with --no-extensions) — sub-agents share the parent's registered " +
+		"providers automatically and do not need to load the extension themselves."
+	);
+}
+
 export function resolveModelChoice(input: {
 	agent: AgentDefinition;
 	task: TaskInput;
 	parentModel: AnyModel | undefined;
 	parentThinking: ThinkingLevel | undefined;
 	find: (provider: string, id: string) => AnyModel | undefined;
+	hasProvider?: (provider: string) => boolean;
+	listProviders?: () => readonly string[];
 }): { model: AnyModel; thinking: ThinkingLevel | undefined; overrideIgnored: boolean } {
-	const { agent, task, parentModel, parentThinking, find } = input;
+	const { agent, task, parentModel, parentThinking, find, hasProvider, listProviders } = input;
 
 	// Step 1: if the agent disallows overrides, treat the task's requested
 	// model/thinking as unset (never throw for a disallowed request).
@@ -45,7 +74,7 @@ export function resolveModelChoice(input: {
 		const provider = modelStr.slice(0, slashIndex);
 		const id = modelStr.slice(slashIndex + 1);
 		const found = find(provider, id);
-		if (!found) throw new Error(`model '${modelStr}' not found`);
+		if (!found) throw new Error(describeModelNotFound(modelStr, provider, id, hasProvider, listProviders));
 		model = found;
 	} else if (parentModel !== undefined) {
 		model = parentModel;
@@ -109,6 +138,8 @@ export async function runChild(opts: RunChildOptions): Promise<RunChildResult> {
 			parentModel: ctx.model,
 			parentThinking: ctx.thinkingLevel,
 			find: (p, id) => ctx.modelRegistry.find(p, id),
+			hasProvider: (p) => ctx.modelRegistry.getProvider(p) !== undefined,
+			listProviders: () => ctx.modelRegistry.getRegisteredProviderIds(),
 		});
 
 		// 2. Settings manager.
