@@ -100,6 +100,9 @@ overridden per-key by project `.pi/settings.json`):
 
 ## RPC event reference
 
+See [`API.md`](./API.md) for the full, detailed reference (every payload shape, truncation
+behavior, delivery timing). Summary:
+
 For RPC client authors: every sub-agent lifecycle and child-session event is forwarded to the
 parent session as a `entry_appended` event whose `entry.customType === "super-agents-event"`. The
 payload shape is:
