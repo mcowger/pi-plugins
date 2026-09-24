@@ -226,6 +226,17 @@ interface RunSummary {
   error?: string;
   outputPath?: string;
   durationMs?: number;     // endedAt - startedAt; undefined until both timestamps are set
+  outputPreview: string;   // finished: final text; running: latest assistant text seen (both bounded to 2000 chars); queued: ""
+  activity: RunActivity[]; // recent tool activity, oldest first (bounded to the last 20)
+}
+
+interface RunActivity {
+  toolCallId: string;
+  toolName: string;
+  argsPreview: string;     // JSON-stringified args, truncated for display
+  status: "running" | "done" | "error";
+  startedAt: number;
+  endedAt?: number;
 }
 
 interface RunUsage {
@@ -243,6 +254,25 @@ update. The final `agent` tool result (once a foreground call resolves) carries 
 `background: true` call's *immediate* return also uses this same `RunSummary` shape for its
 `details.runs` (all `status: "queued"` or `"running"` at that point, since it returns without
 waiting), as do `agent_wait` and `agent_status` results.
+
+## `agent_status`: inspecting runs without waiting
+
+`agent_status` accepts `{ ids?: string[] }` — run ids or instance names. Omitting `ids` lists all
+runs (newest first); passing `ids` returns just those runs, throwing
+`"unknown agent id(s): …"` on any unknown key. Each run's human-readable block keeps the
+one-line `<id>  <name>  <slug>  <status>  <duration>s` header, followed by indented lines:
+
+```
+abc12345  scout-2  scout  running  12.3s
+  output: partial answer seen so far…
+  activity: grep(done) {"pattern":"foo"}, read(running) {"path":"src/x"}
+```
+
+`output:` is the same `outputPreview` from `details.runs` (or `(no output yet)` when empty),
+`activity:` shows the last 5 tool entries (or `none yet`), plus `full output: <path>` and
+`error: <msg>` lines when applicable. Live `outputPreview`/`activity` are captured from the
+child's `message_end`/`tool_execution_start`/`tool_execution_end`/`turn_end` events — so an
+aborted or still-running run shows whatever it had produced up to the moment of inspection.
 
 ## `super-agents-result` (background delivery)
 

@@ -96,7 +96,7 @@ overridden per-key by project `.pi/settings.json`):
 | `agent` | `tasks: [{ agent, prompt, name?, model?, thinking? }]`, `background?: boolean` | Runs one or more tasks on sub-agents in parallel. `model`/`thinking` are only honored for agents with `allow_model_override: true`; otherwise they're ignored and the result notes `overrideIgnored`. With `background: true`, returns immediately with run ids; results are pushed automatically as a message later (or fetched with `agent_wait`). Without it, blocks and returns each agent's formatted final answer. |
 | `agent_wait` | `ids?: string[]`, `timeout_seconds?: 1..3600 (default 600)` | Waits for background sub-agents to finish and returns their results. Omitting `ids` waits for all undelivered background runs. |
 | `agent_stop` | `ids: string[]` (ids or names, minItems 1) | Aborts running or queued sub-agents by id or name. |
-| `agent_status` | `{}` | Lists all sub-agent runs for the session with their status. Not meant to be polled — results are delivered automatically. |
+| `agent_status` | `ids?: string[]` (ids or names) | Lists sub-agent runs with status, recent output, and recent tool activity. Omitting `ids` lists all runs; passing `ids` inspects specific runs — including in-progress or aborted ones — without waiting. Finished runs show their final text (via overflow file path if truncated); running runs show the latest assistant text seen plus recent tool calls. Not meant to be polled — results are delivered automatically. |
 
 ## RPC event reference
 

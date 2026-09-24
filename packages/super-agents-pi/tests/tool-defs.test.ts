@@ -131,8 +131,9 @@ describe("other tool param schemas", () => {
 		expect(schema.required).toContain("ids");
 	});
 
-	it("agent_status: empty object schema", () => {
+	it("agent_status: optional ids filter, nothing required", () => {
 		const schema = buildAgentStatusParams() as unknown as SchemaNode;
-		expect(Object.keys(schema.properties ?? {})).toEqual([]);
+		expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["ids"]);
+		expect(schema.required ?? []).not.toContain("ids");
 	});
 });

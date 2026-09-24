@@ -519,3 +519,162 @@ describe("RunManager lifecycle events", () => {
 		expect(phases).toEqual(["queued", "started", "finished"]);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Live output tracking (for agent_status inspection)
+// ---------------------------------------------------------------------------
+
+describe("RunManager live output tracking", () => {
+	function assistantMessage(text: string): unknown {
+		return { role: "assistant", content: [{ type: "text", text }] };
+	}
+
+	it("captures preview text, tool activity, and live turn counts from child events", async () => {
+		const runChild = async (opts: RunChildOptions): Promise<RunChildResult> => {
+			opts.onStarted({ model: "anthropic/claude-x", thinking: undefined, overrideIgnored: false });
+			opts.onEvent({
+				type: "tool_execution_start",
+				toolCallId: "c1",
+				toolName: "grep",
+				args: { pattern: "foo" },
+			} as never);
+			opts.onEvent({ type: "message_end", message: assistantMessage("partial answer") } as never);
+			opts.onEvent({ type: "turn_end", message: assistantMessage("partial answer"), toolResults: [] } as never);
+			opts.onEvent({
+				type: "tool_execution_end",
+				toolCallId: "c1",
+				toolName: "grep",
+				result: {},
+				isError: false,
+			} as never);
+			return { status: "completed", text: "final answer", usage: zeroUsage() };
+		};
+		const { deps } = makeDeps({ runChild });
+		const manager = new RunManager(deps);
+		const { records, done } = manager.startTasks({
+			tasks: [makeTask()],
+			background: false,
+			parentToolCallId: "tc1",
+			ctx: makeCtx(),
+		});
+		await done;
+		const record = records[0];
+		// Live preview captured from message_end; final text wins once finished.
+		expect(record.previewText).toBe("partial answer");
+		expect(record.resultText).toBe("final answer");
+		expect(record.activity).toHaveLength(1);
+		expect(record.activity?.[0]).toMatchObject({ toolCallId: "c1", toolName: "grep", status: "done" });
+		expect(record.activity?.[0]?.argsPreview).toContain("foo");
+	});
+
+	it("marks failed tool executions as error and keeps running ones as running", async () => {
+		const runChild = async (opts: RunChildOptions): Promise<RunChildResult> => {
+			opts.onStarted({ model: "anthropic/claude-x", thinking: undefined, overrideIgnored: false });
+			opts.onEvent({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "a" } } as never);
+			opts.onEvent({ type: "tool_execution_start", toolCallId: "c2", toolName: "bash", args: { cmd: "x" } } as never);
+			opts.onEvent({
+				type: "tool_execution_end",
+				toolCallId: "c1",
+				toolName: "read",
+				result: {},
+				isError: true,
+			} as never);
+			return { status: "completed", text: "done", usage: zeroUsage() };
+		};
+		const { deps } = makeDeps({ runChild });
+		const manager = new RunManager(deps);
+		const { records, done } = manager.startTasks({
+			tasks: [makeTask()],
+			background: false,
+			parentToolCallId: "tc1",
+			ctx: makeCtx(),
+		});
+		await done;
+		expect(records[0].activity?.map((a) => `${a.toolName}:${a.status}`)).toEqual(["read:error", "bash:running"]);
+	});
+
+	it("ignores non-assistant message_end events and bounds long previews", async () => {
+		const long = "x".repeat(5000);
+		const runChild = async (opts: RunChildOptions): Promise<RunChildResult> => {
+			opts.onStarted({ model: "anthropic/claude-x", thinking: undefined, overrideIgnored: false });
+			opts.onEvent({ type: "message_end", message: { role: "user", content: "hi" } } as never);
+			opts.onEvent({ type: "message_end", message: assistantMessage(long) } as never);
+			return { status: "completed", text: "done", usage: zeroUsage() };
+		};
+		const { deps } = makeDeps({ runChild });
+		const manager = new RunManager(deps);
+		const { records, done } = manager.startTasks({
+			tasks: [makeTask()],
+			background: false,
+			parentToolCallId: "tc1",
+			ctx: makeCtx(),
+		});
+		await done;
+		// biome-ignore lint/style/noNonNullAssertion: set by the message_end above
+		expect(records[0].previewText!.length).toBeLessThanOrEqual(5000);
+		// biome-ignore lint/style/noNonNullAssertion: set by the message_end above
+		expect(records[0].previewText!).toContain("[truncated");
+	});
+
+	it("bounds activity to the most recent entries", async () => {
+		const { MAX_ACTIVITY_ENTRIES } = await import("../src/manager.ts");
+		const runChild = async (opts: RunChildOptions): Promise<RunChildResult> => {
+			opts.onStarted({ model: "anthropic/claude-x", thinking: undefined, overrideIgnored: false });
+			for (let i = 0; i < MAX_ACTIVITY_ENTRIES + 5; i++) {
+				opts.onEvent({ type: "tool_execution_start", toolCallId: `c${i}`, toolName: "read", args: {} } as never);
+			}
+			return { status: "completed", text: "done", usage: zeroUsage() };
+		};
+		const { deps } = makeDeps({ runChild });
+		const manager = new RunManager(deps);
+		const { records, done } = manager.startTasks({
+			tasks: [makeTask()],
+			background: false,
+			parentToolCallId: "tc1",
+			ctx: makeCtx(),
+		});
+		await done;
+		expect(records[0].activity).toHaveLength(MAX_ACTIVITY_ENTRIES);
+		expect(records[0].activity?.[0]?.toolCallId).toBe("c5");
+	});
+});
+
+describe("RunManager.status filtering", () => {
+	it("returns all runs when no filter is given, newest first", async () => {
+		const { deps } = makeDeps();
+		const manager = new RunManager(deps);
+		const first = manager.startTasks({
+			tasks: [makeTask({ name: "a" })],
+			background: true,
+			parentToolCallId: "tc1",
+			ctx: makeCtx(),
+		});
+		await tick();
+		const second = manager.startTasks({
+			tasks: [makeTask({ name: "b" })],
+			background: true,
+			parentToolCallId: "tc2",
+			ctx: makeCtx(),
+		});
+		await Promise.all([first.done, second.done]);
+		const all = manager.status();
+		expect(all.map((r) => r.name)).toEqual(["b", "a"]);
+		expect(manager.status(undefined).map((r) => r.name)).toEqual(["b", "a"]);
+	});
+
+	it("filters by id or name and throws on unknown keys", async () => {
+		const { deps } = makeDeps();
+		const manager = new RunManager(deps);
+		const { records, done } = manager.startTasks({
+			tasks: [makeTask({ name: "alpha" }), makeTask({ name: "beta" })],
+			background: true,
+			parentToolCallId: "tc1",
+			ctx: makeCtx(),
+		});
+		await done;
+		expect(manager.status([records[0].id]).map((r) => r.id)).toEqual([records[0].id]);
+		expect(manager.status(["beta"]).map((r) => r.name)).toEqual(["beta"]);
+		expect(manager.status([records[0].id, "beta"])).toHaveLength(2);
+		expect(() => manager.status(["ghost"])).toThrow(/unknown agent id\(s\): ghost/);
+	});
+});

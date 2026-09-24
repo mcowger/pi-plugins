@@ -14,7 +14,7 @@ export const AGENT_WAIT_DESCRIPTION =
 export const AGENT_STOP_DESCRIPTION = "Abort running or queued sub-agents by id or name.";
 
 export const AGENT_STATUS_DESCRIPTION =
-	"List sub-agent runs with status. Do not poll; results are delivered automatically.";
+	"List sub-agent runs with status, recent output, and recent tool activity. Pass ids (run ids or names) to inspect specific runs — including in-progress or aborted ones — without waiting. Omit ids to list all runs. Do not poll; results are delivered automatically.";
 
 export function buildAgentToolParams(agents: AgentDefinition[], cfg: SuperAgentsConfig): TSchema {
 	const allowsOverride = agents.some((agent) => agent.allowModelOverride);
@@ -81,5 +81,12 @@ export function buildAgentStopParams(): TSchema {
 }
 
 export function buildAgentStatusParams(): TSchema {
-	return Type.Object({}, { additionalProperties: false });
+	return Type.Object(
+		{
+			ids: Type.Optional(
+				Type.Array(Type.String(), { description: "Run ids or names to inspect; omit to list all runs" }),
+			),
+		},
+		{ additionalProperties: false },
+	);
 }

@@ -5,7 +5,7 @@ import type { EventContext, EventEmitter } from "./events.ts";
 import { finalizeResult, formatRunResult } from "./results.ts";
 import type { runChild } from "./runner.ts";
 import { Semaphore } from "./semaphore.ts";
-import type { AgentDefinition, RunRecord, RunStatus, SuperAgentsConfig, TaskInput } from "./types.ts";
+import type { AgentDefinition, RunActivity, RunRecord, RunStatus, SuperAgentsConfig, TaskInput } from "./types.ts";
 
 export interface ManagerDeps {
 	config: SuperAgentsConfig;
@@ -31,6 +31,90 @@ const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const ID_LENGTH = 8;
 const FINISHED_STATUSES = new Set<RunStatus>(["completed", "failed", "aborted", "turn_limited"]);
 const PROGRESS_THROTTLE_MS = 250; // at most 4/s
+
+export const MAX_ACTIVITY_ENTRIES = 20;
+export const PREVIEW_MAX_CHARS = 4000;
+const ARGS_PREVIEW_CHARS = 200;
+
+/** Extracts concatenated text parts from an assistant message, if any. */
+export function extractAssistantText(message: unknown): string | undefined {
+	if (typeof message !== "object" || message === null) return undefined;
+	const msg = message as { role?: unknown; content?: unknown };
+	if (msg.role !== "assistant" || !Array.isArray(msg.content)) return undefined;
+	const parts: string[] = [];
+	for (const block of msg.content) {
+		if (typeof block === "object" && block !== null) {
+			const b = block as { type?: unknown; text?: unknown };
+			if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) parts.push(b.text);
+		}
+	}
+	if (parts.length === 0) return undefined;
+	return parts.join("\n");
+}
+
+export function previewArgs(args: unknown): string {
+	let text: string;
+	try {
+		text = JSON.stringify(args) ?? String(args);
+	} catch {
+		text = String(args);
+	}
+	if (text.length > ARGS_PREVIEW_CHARS) return `${text.slice(0, ARGS_PREVIEW_CHARS)}…`;
+	return text;
+}
+
+function trackEvent(record: RunRecord, event: { type: string } & Record<string, unknown>): void {
+	const now = Date.now();
+	if (event.type === "message_end") {
+		const text = extractAssistantText(event.message);
+		if (text !== undefined) {
+			record.previewText =
+				text.length > PREVIEW_MAX_CHARS
+					? `${text.slice(0, PREVIEW_MAX_CHARS)}…[truncated ${text.length - PREVIEW_MAX_CHARS} chars]`
+					: text;
+		}
+		return;
+	}
+	if (event.type === "tool_execution_start") {
+		const entry: RunActivity = {
+			toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : `${now}`,
+			toolName: typeof event.toolName === "string" ? event.toolName : "unknown",
+			argsPreview: previewArgs(event.args),
+			status: "running",
+			startedAt: now,
+		};
+		const activity = record.activity ?? [];
+		activity.push(entry);
+		while (activity.length > MAX_ACTIVITY_ENTRIES) activity.shift();
+		record.activity = activity;
+		return;
+	}
+	if (event.type === "tool_execution_end") {
+		const activity = record.activity;
+		if (!activity) return;
+		const id = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
+		const entry =
+			(id !== undefined ? activity.find((a) => a.toolCallId === id && a.status === "running") : undefined) ??
+			[...activity].reverse().find((a) => a.status === "running");
+		if (entry) {
+			entry.status = event.isError === true ? "error" : "done";
+			entry.endedAt = now;
+		}
+		return;
+	}
+	if (event.type === "turn_end") {
+		const usage = record.usage;
+		if (usage) usage.turns += 1;
+		else {
+			record.usage = {
+				turns: 1,
+				toolCalls: 0,
+				tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				cost: 0,
+			};
+		}
+	}
+}
 
 function isFinished(status: RunStatus): boolean {
 	return FINISHED_STATUSES.has(status);
@@ -225,14 +309,20 @@ export class RunManager {
 			signal: controller.signal,
 			onEvent: (event) => {
 				this.#deps.emitter.session(evCtx, event);
+				trackEvent(record, event as { type: string } & Record<string, unknown>);
 				if (event.type === "tool_execution_start") {
 					toolCalls += 1;
-					record.usage = {
-						turns: record.usage?.turns ?? 0,
-						toolCalls,
-						tokens: record.usage?.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						cost: record.usage?.cost ?? 0,
-					};
+					// trackEvent already created the activity entry; sync the live tool-call count here
+					// without resetting the turns counter that turn_end tracking maintains.
+					if (record.usage) record.usage.toolCalls = toolCalls;
+					else {
+						record.usage = {
+							turns: 0,
+							toolCalls,
+							tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+							cost: 0,
+						};
+					}
 				}
 				const now = Date.now();
 				if (now - throttle.last >= PROGRESS_THROTTLE_MS) {
@@ -402,8 +492,18 @@ export class RunManager {
 		return { stopped, notFound, alreadyFinished };
 	}
 
-	status(): RunRecord[] {
-		return [...this.#records.values()].sort((a, b) => b.createdAt - a.createdAt);
+	status(idsOrNames?: string[]): RunRecord[] {
+		const all = [...this.#records.values()].sort((a, b) => b.createdAt - a.createdAt);
+		if (idsOrNames === undefined) return all;
+		const unknown: string[] = [];
+		const found: RunRecord[] = [];
+		for (const key of idsOrNames) {
+			const record = this.#records.get(key) ?? all.find((r) => r.name === key);
+			if (!record) unknown.push(key);
+			else if (!found.includes(record)) found.push(record);
+		}
+		if (unknown.length > 0) throw new Error(`unknown agent id(s): ${unknown.join(", ")}`);
+		return found;
 	}
 
 	shutdown(): void {

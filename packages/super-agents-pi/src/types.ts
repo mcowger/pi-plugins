@@ -57,6 +57,15 @@ export interface RunUsage {
 	cost: number;
 }
 
+export interface RunActivity {
+	toolCallId: string;
+	toolName: string;
+	argsPreview: string; // JSON-stringified args, truncated for display
+	status: "running" | "done" | "error";
+	startedAt: number;
+	endedAt?: number;
+}
+
 export interface RunRecord {
 	id: string; // e.g. "a7k2m9qz" (8 chars [a-z0-9]); THE id — no short/long forms
 	name: string; // instance name, unique among non-finished runs
@@ -76,4 +85,6 @@ export interface RunRecord {
 	error?: string;
 	usage?: RunUsage;
 	delivered: boolean; // result consumed by agent_wait / foreground return / background push
+	previewText?: string; // latest assistant text seen via message_end (bounded); live output for running runs
+	activity?: RunActivity[]; // recent tool activity, oldest first (bounded)
 }

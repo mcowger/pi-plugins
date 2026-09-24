@@ -35,6 +35,21 @@ interface AgentToolParams {
 	background?: boolean;
 }
 
+const STATUS_PREVIEW_CHARS = 2000;
+const STATUS_ACTIVITY_TEXT_LIMIT = 5;
+
+function boundPreview(text: string, limit: number = STATUS_PREVIEW_CHARS): string {
+	if (text.length <= limit) return text;
+	return `${text.slice(0, limit)}…[truncated ${text.length - limit} chars]`;
+}
+
+/** Current output snapshot: final text once finished, otherwise the latest assistant text seen. */
+function statusPreview(r: RunRecord): string {
+	if (r.resultText !== undefined) return boundPreview(r.resultText);
+	if (r.previewText !== undefined) return boundPreview(r.previewText);
+	return "";
+}
+
 interface RunSummary {
 	id: string;
 	name: string;
@@ -46,6 +61,15 @@ interface RunSummary {
 	error?: string;
 	outputPath?: string;
 	durationMs?: number;
+	outputPreview: string;
+	activity: Array<{
+		toolCallId: string;
+		toolName: string;
+		argsPreview: string;
+		status: string;
+		startedAt: number;
+		endedAt?: number;
+	}>;
 }
 
 function summary(r: RunRecord): RunSummary {
@@ -60,7 +84,35 @@ function summary(r: RunRecord): RunSummary {
 		error: r.error,
 		outputPath: r.outputPath,
 		durationMs: r.startedAt !== undefined && r.endedAt !== undefined ? r.endedAt - r.startedAt : undefined,
+		outputPreview: statusPreview(r),
+		activity: (r.activity ?? []).map((a) => ({ ...a })),
 	};
+}
+
+function formatStatusActivity(r: RunRecord): string {
+	const activity = r.activity ?? [];
+	if (activity.length === 0) return "none yet";
+	const tail = activity.slice(-STATUS_ACTIVITY_TEXT_LIMIT);
+	const parts = tail.map((a) => {
+		const args = a.argsPreview.length > 100 ? `${a.argsPreview.slice(0, 100)}…` : a.argsPreview;
+		return `${a.toolName}(${a.status}) ${args}`;
+	});
+	const extra = activity.length > tail.length ? ` (+${activity.length - tail.length} more)` : "";
+	return parts.join(", ") + extra;
+}
+
+function formatStatusRun(r: RunRecord): string {
+	const durationMs = r.startedAt !== undefined ? (r.endedAt ?? Date.now()) - r.startedAt : undefined;
+	const seconds = durationMs !== undefined ? (durationMs / 1000).toFixed(1) : "-";
+	const header = `${r.id}  ${r.name}  ${r.slug}  ${r.status}  ${seconds}s`;
+	const preview = statusPreview(r);
+	const outputLines = (preview.length > 0 ? preview : "(no output yet)").split("\n");
+	const lines = [header, `  output: ${outputLines[0]}`];
+	for (const line of outputLines.slice(1)) lines.push(`  ${line}`);
+	lines.push(`  activity: ${formatStatusActivity(r)}`);
+	if (r.outputPath) lines.push(`  full output: ${r.outputPath}`);
+	if (r.error) lines.push(`  error: ${r.error}`);
+	return lines.join("\n");
 }
 
 let runChildImpl: typeof runChild = runChild;
@@ -189,18 +241,15 @@ export default function superAgents(pi: ExtensionAPI): void {
 			label: "Sub-agent Status",
 			description: AGENT_STATUS_DESCRIPTION,
 			parameters: buildAgentStatusParams(),
-			async execute() {
+			async execute(_toolCallId, rawParams) {
 				if (!manager) throw new Error(NOT_INITIALISED);
-				const records = manager.status();
+				const params = rawParams as { ids?: string[] };
+				const records = manager.status(params.ids);
 				if (records.length === 0) {
 					return { content: [{ type: "text", text: "No sub-agent runs." }], details: { runs: [] } };
 				}
-				const lines = records.map((r) => {
-					const durationMs = r.startedAt !== undefined ? (r.endedAt ?? Date.now()) - r.startedAt : undefined;
-					const seconds = durationMs !== undefined ? (durationMs / 1000).toFixed(1) : "-";
-					return `${r.id}  ${r.name}  ${r.slug}  ${r.status}  ${seconds}s`;
-				});
-				return { content: [{ type: "text", text: lines.join("\n") }], details: { runs: records.map(summary) } };
+				const blocks = records.map(formatStatusRun);
+				return { content: [{ type: "text", text: blocks.join("\n\n") }], details: { runs: records.map(summary) } };
 			},
 		});
 	}

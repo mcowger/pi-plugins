@@ -17,7 +17,9 @@ interface SchemaNode {
 
 interface FakeToolResult {
 	content: Array<{ type: string; text: string }>;
-	details: { runs: Array<{ id: string; status: string }> };
+	details: {
+		runs: Array<{ id: string; status: string; outputPreview?: string; activity?: Array<Record<string, unknown>> }>;
+	};
 }
 
 interface FakeTool {
@@ -267,5 +269,95 @@ describe("agent tool execute", () => {
 		expect(result.content[0]?.text).toContain("run-a (scout)");
 		expect(result.content[0]?.text).toContain("result for run-a");
 		expect(result.details.runs[0]?.status).toBe("completed");
+	});
+});
+
+describe("agent_status execute", () => {
+	it("includes final output preview in text and details for a finished run", async () => {
+		await writeAgentFile(agentsSubdir, "scout");
+		__setRunChildForTests(immediateRunChild);
+
+		const pi = mockPi();
+		superAgents(pi as unknown as ExtensionAPI);
+		const ctx = makeCtx({ cwd: agentDirTemp });
+		await pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
+
+		// biome-ignore lint/style/noNonNullAssertion: registered by session_start above
+		const agentTool = pi.tools.get("agent")!;
+		await agentTool.execute(
+			"call-1",
+			{ tasks: [{ agent: "scout", prompt: "do the thing", name: "run-a" }] },
+			undefined,
+			undefined,
+			ctx as unknown as ExtensionContext,
+		);
+
+		// biome-ignore lint/style/noNonNullAssertion: registered by session_start above
+		const statusTool = pi.tools.get("agent_status")!;
+		const result = await statusTool.execute("call-2", {}, undefined, undefined, ctx);
+		expect(result.content[0]?.text).toContain("run-a");
+		expect(result.content[0]?.text).toContain("result for run-a");
+		expect(result.content[0]?.text).toContain("activity:");
+		expect(result.details.runs[0]?.outputPreview).toContain("result for run-a");
+		expect(result.details.runs[0]?.activity).toEqual([]);
+	});
+
+	it("shows live preview and tool activity for an in-progress run", async () => {
+		await writeAgentFile(agentsSubdir, "scout");
+		let captured: RunChildOptions | undefined;
+		let resolveRun!: (r: RunChildResult) => void;
+		const runChild = async (opts: RunChildOptions): Promise<RunChildResult> => {
+			captured = opts;
+			opts.onStarted({ model: "anthropic/claude-x", thinking: undefined, overrideIgnored: false });
+			opts.onEvent({
+				type: "tool_execution_start",
+				toolCallId: "c1",
+				toolName: "grep",
+				args: { pattern: "live" },
+			} as never);
+			opts.onEvent({
+				type: "message_end",
+				message: { role: "assistant", content: [{ type: "text", text: "working on it" }] },
+			} as never);
+			return new Promise<RunChildResult>((resolve) => {
+				resolveRun = resolve;
+			});
+		};
+		__setRunChildForTests(runChild);
+
+		const pi = mockPi();
+		superAgents(pi as unknown as ExtensionAPI);
+		const ctx = makeCtx({ cwd: agentDirTemp });
+		await pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
+
+		// biome-ignore lint/style/noNonNullAssertion: registered by session_start above
+		const agentTool = pi.tools.get("agent")!;
+		const started = await agentTool.execute(
+			"call-1",
+			{ tasks: [{ agent: "scout", prompt: "do the thing", name: "live-run" }], background: true },
+			undefined,
+			undefined,
+			ctx as unknown as ExtensionContext,
+		);
+		const id = started.details.runs[0]?.id as string;
+		expect(captured).toBeDefined();
+
+		// biome-ignore lint/style/noNonNullAssertion: registered by session_start above
+		const statusTool = pi.tools.get("agent_status")!;
+		const result = await statusTool.execute("call-2", {}, undefined, undefined, ctx);
+		expect(result.content[0]?.text).toContain("working on it");
+		expect(result.content[0]?.text).toContain("grep(running)");
+		expect(result.details.runs[0]?.outputPreview).toBe("working on it");
+		expect(result.details.runs[0]?.activity?.[0]).toMatchObject({ toolName: "grep", status: "running" });
+
+		// Filtering by id returns just that run; unknown ids throw.
+		const filtered = await statusTool.execute("call-3", { ids: [id] }, undefined, undefined, ctx);
+		expect(filtered.details.runs).toHaveLength(1);
+		expect(filtered.details.runs[0]?.id).toBe(id);
+		await expect(statusTool.execute("call-4", { ids: ["ghost"] }, undefined, undefined, ctx)).rejects.toThrow(
+			/unknown agent id/,
+		);
+
+		resolveRun({ status: "completed", text: "done", usage: zeroUsage() });
 	});
 });
