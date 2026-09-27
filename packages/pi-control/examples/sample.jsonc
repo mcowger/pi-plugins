@@ -135,7 +135,6 @@
 			"action": "allow",
 			"tool": "bash",
 			"pattern": "bun run build*",
-			"allowUnanalyzed": true,
 			"policy": "cwd"
 		}
 	],
@@ -165,23 +164,6 @@
 	// Must be a valid pi KeyId (e.g. "ctrl+shift+m", "alt+p", "ctrl+shift+z").
 	// Defaults to "ctrl+shift+m" when absent.
 	"cycleKey": "ctrl+shift+m",
-
-	// ── Interpreter source analysis ────────────────────────────────────────────
-	// Inspect Python, Node, Bun, and nested shell source supplied through inline
-	// evaluation flags, heredocs, and here-strings. Literal filesystem paths are
-	// evaluated through the normal location policies. Dynamic paths, unknown
-	// calls/imports, subprocesses, parser errors, and other unresolved effects
-	// use unknownAction. Set this object to null to disable the feature. To trust
-	// a narrow, unanalyzed command class, add allowUnanalyzed: true to a matching
-	// allow Bash rule (for example, { action: "allow", tool: "bash", pattern:
-	// "bun run*", allowUnanalyzed: true }).
-	"interpreterAnalysis": {
-		"enabled": true,
-		"unknownAction": "ask", // use "deny" for unattended environments
-		"maxSourceBytes": 262144,
-		"maxDepth": 4,
-		"maxNodes": 10000
-	},
 
 	// ── Agent timeout (circuit breaker) ───────────────────────────────────────
 	// Optional. When the agent racks up `maxDenies` denied tool calls within
@@ -214,5 +196,65 @@
 	"nudgeTimeout": {
 		"maxNudges": 3, // escalate after 3 ignored nudges for the same rule…
 		"windowSeconds": 60 // …within any 60-second rolling window
+	},
+
+	// ── Decisions API eval classification ────────────────────────────────────
+	// Optional. When present, inline code evals (python -c, node -e, bun -e,
+	// deno eval, tsx -e, bash -c, and heredoc-fed interpreters) are sent to
+	// the Decisions router, which answers capability/scope questions about the
+	// code. Deterministic rules plus a weighted-score backstop map the answers
+	// to allow/ask/deny, combined upgrade-only with the location verdict — the
+	// model can escalate but never downgrade a location ask/deny.
+	//
+	// Script-file and module runs (python script.py, python -m pytest) are NOT
+	// classified — they stay under path-based policy. Commands with an explicit
+	// session or saved approval skip the API call entirely.
+	//
+	// Remove this field (or set to null) to disable classification: bash
+	// enforcement is then location policy only, with zero network calls.
+	"decisions": {
+		// Full endpoint URL of the Decisions API.
+		"url": "https://openrouter.ai/api/alpha/decisions",
+
+		// Name of the environment variable holding the bearer token.
+		// The token itself never appears in config — only the var name.
+		"tokenEnv": "OPENROUTER_API_KEY",
+
+		// Model requested from the Decisions router.
+		"model": "typesafe/jev-1.13",
+
+		// Per-request timeout and max source bytes sent per eval.
+		"timeoutMs": 15000,
+		"maxSourceBytes": 32768,
+
+		// Fallbacks: eval shape detected but source not statically recoverable
+		// (dynamic args, piped stdin), and API/network/auth/timeout failures.
+		"unavailableAction": "ask",
+		"errorAction": "ask",
+
+		// Stage-1 probability buckets: noul p >= yesThreshold → yes,
+		// p <= noThreshold → no, between → uncertain. Choice answers need
+		// P(top) >= choiceConfidence for a confident label.
+		"yesThreshold": 0.7,
+		"noThreshold": 0.3,
+		"choiceConfidence": 0.6,
+		"riskyMassThreshold": 0.35,
+
+		// Stage-2 backstop: weighted sum over raw probabilities; score >=
+		// backstopThreshold → ask. The backstop never denies. Weights are
+		// deep-merged, so a project config can override a single weight.
+		"backstopThreshold": 40,
+		"weights": {
+			"destructive": 100,
+			"obfuscated": 40,
+			"network": 25,
+			"exec": 15,
+			"inferenceCall": 10,
+			"writeSensitive": 50,
+			"writeOutside": 30,
+			"writeUnknown": 20,
+			"readSensitive": 40,
+			"readUnknown": 20
+		}
 	}
 }

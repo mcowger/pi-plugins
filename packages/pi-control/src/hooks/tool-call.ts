@@ -6,7 +6,6 @@ import type {
 import type { ControlsMode } from "../index.js";
 import {
 	addApprovalRule,
-	DEFAULT_INTERPRETER_ANALYSIS,
 	type ControlsResolvedConfig,
 	type Action,
 	type Rule,
@@ -21,9 +20,20 @@ import { normalizePath } from "../utils/path.js";
 import { parseCommand } from "../utils/bash-ast.js";
 import { logDecision } from "../utils/logger.js";
 import { minimatch } from "minimatch";
+import { basename } from "node:path";
 import { DenyTracker } from "../utils/deny-tracker.js";
 import { suggestSessionPattern } from "../utils/bash-arity.js";
-import { analyzeCommandStageSource } from "../utils/command-source-analysis.js";
+import type { CommandStage } from "../utils/bash-ast.js";
+import { detectEvalSources, type EvalSource } from "../utils/eval-detection.js";
+import {
+	DecisionsError,
+	classifySource,
+	evalCacheKey,
+	getCachedVerdict,
+	setCachedVerdict,
+	verdictRationale,
+} from "../utils/decisions.js";
+import type { EvalTrace } from "../utils/logger.js";
 
 /**
  * Nudge messages pending injection into tool results, keyed by toolCallId.
@@ -121,6 +131,150 @@ export function nudgeKey(tool: string, pattern?: string): string {
 	return pattern !== undefined ? `${tool}:${pattern}` : tool;
 }
 
+/** One eval-derived contribution to the final bash verdict. */
+interface EvalOutcome {
+	action: "allow" | "ask" | "deny";
+	note: string;
+	trace: EvalTrace;
+}
+
+/** Warn once per session when eval classification auth fails. */
+let decisionsAuthWarned = false;
+
+/** argv[0] label for an eval trace ("unknown" when dynamic). */
+function stageInterpreterLabel(stage: CommandStage): string {
+	const first = stage.args[0];
+	if (!first?.static) return "unknown";
+	return basename(first.value).toLowerCase() || "unknown";
+}
+
+/**
+ * Classify inline eval sources in bash stages via the Decisions API.
+ *
+ * Returns one outcome per source (plus one per unrecoverable/error case).
+ * Skips the API entirely — recording the reason — when the feature is off,
+ * no evals are present, or the command already carries an explicit approval.
+ */
+async function classifyEvalSources(
+	ctx: ExtensionContext,
+	stages: CommandStage[],
+	pipeline: string,
+	cwd: string,
+	targets: string[],
+	config: ControlsResolvedConfig,
+	approvalAllowed: boolean,
+	sessionAllowed: boolean,
+): Promise<{
+	outcomes: EvalOutcome[];
+	skipped?: "session-allow" | "approval-rule";
+}> {
+	const decisions = config.decisions;
+	if (!decisions) return { outcomes: [] };
+
+	const found: { source: EvalSource; stageCommand: string }[] = [];
+	const missing: { interpreter: string; detail: string }[] = [];
+	for (const stage of stages) {
+		const detection = detectEvalSources(stage);
+		for (const source of detection.sources) {
+			found.push({ source, stageCommand: stage.command });
+		}
+		const label = stageInterpreterLabel(stage);
+		for (const detail of detection.unavailable) {
+			missing.push({ interpreter: label, detail });
+		}
+	}
+	if (found.length === 0 && missing.length === 0) return { outcomes: [] };
+	if (sessionAllowed) return { outcomes: [], skipped: "session-allow" };
+	if (approvalAllowed) return { outcomes: [], skipped: "approval-rule" };
+
+	const outcomes: EvalOutcome[] = [];
+	for (const { interpreter, detail } of missing) {
+		const action = decisions.unavailableAction;
+		outcomes.push({
+			action,
+			note: detail,
+			trace: { kind: "unavailable", interpreter, detail, action },
+		});
+	}
+	const classified = await Promise.all(
+		found.map(async ({ source, stageCommand }): Promise<EvalOutcome> => {
+			const key = evalCacheKey(source.language, source.source);
+			const cached = getCachedVerdict(key);
+			if (cached !== undefined) {
+				return {
+					action: cached,
+					note: `cached: ${cached}`,
+					trace: { kind: "cached", key, verdict: cached },
+				};
+			}
+			const started = Date.now();
+			try {
+				const result = await classifySource(
+					{ source, stageCommand, pipeline, cwd, targets },
+					decisions,
+				);
+				setCachedVerdict(key, result.verdict);
+				return {
+					action: result.verdict,
+					note: verdictRationale(result),
+					trace: {
+						kind: "classified",
+						language: source.language,
+						interpreter: source.interpreter,
+						origin: source.origin,
+						truncated: result.request.state.truncated,
+						request: result.request,
+						response: result.response,
+						evaluation: {
+							buckets: result.buckets,
+							appliedConfig: {
+								yesThreshold: decisions.yesThreshold,
+								noThreshold: decisions.noThreshold,
+								choiceConfidence: decisions.choiceConfidence,
+								riskyMassThreshold: decisions.riskyMassThreshold,
+								backstopThreshold: decisions.backstopThreshold,
+								weights: decisions.weights,
+							},
+							stage1: result.stage1,
+							stage2: result.stage2,
+							verdict: result.verdict,
+						},
+						latencyMs: result.latencyMs,
+					},
+				};
+			} catch (error) {
+				const detail =
+					error instanceof DecisionsError ? error.detail : String(error);
+				if (
+					error instanceof DecisionsError &&
+					error.code === "auth" &&
+					!decisionsAuthWarned
+				) {
+					decisionsAuthWarned = true;
+					ctx.ui.notify(
+						`[pi-controls] eval classification auth failed: ${detail}`,
+						"warning",
+					);
+				}
+				const action = decisions.errorAction;
+				return {
+					action,
+					note: detail,
+					trace: {
+						kind: "error",
+						interpreter: source.interpreter,
+						detail,
+						action,
+						latencyMs: Date.now() - started,
+					},
+				};
+			}
+		}),
+	);
+	outcomes.push(...classified);
+	return { outcomes };
+}
+
 function getTargetPaths(event: ToolCallEvent, cwd: string): string[] {
 	if (event.toolName === "bash") return [];
 	const input = event.input as Record<string, unknown>;
@@ -148,13 +302,7 @@ function buildContextSuffix(
 	return parts.length > 0 ? ` — ${parts.join(", ")}` : "";
 }
 
-/**
- * Build an ask prompt for an interpreter-analysis fallback.
- *
- * The paths are policy-evaluation targets, not necessarily prohibited paths.
- * Keeping them separate from the analysis reason avoids implying that a
- * location policy blocked an otherwise allowed command.
- */
+/** Rule details for persisting an "Allow for Project/Globally" choice. */
 interface ApprovalPersistence {
 	rule: Rule;
 	config: ControlsResolvedConfig;
@@ -177,44 +325,6 @@ function matchingApprovalRule(
 		command,
 	);
 	return result.action === "allow" ? result : undefined;
-}
-
-function buildAnalysisAskTitle(
-	toolName: string,
-	command: string | null,
-	targets: string[],
-	decisionReason: string,
-): string {
-	const commandSection = command
-		? `\n\nCommand:\n${command.slice(0, 240)}`
-		: "";
-	const reasonList = decisionReason
-		.split("; ")
-		.map((reason) => `• ${reason}`)
-		.join("\n");
-	const targetSection =
-		targets.length > 0
-			? `\n\nPolicy-evaluated target${targets.length === 1 ? "" : "s"}:\n${targets.map((target) => `• ${target}`).join("\n")}`
-			: "";
-	return (
-		`[pi-controls] Allow ${toolName}?` +
-		commandSection +
-		"\n\nReason for confirmation:\n" +
-		"Static analysis could not prove the interpreter source safe:\n" +
-		reasonList +
-		targetSection
-	);
-}
-
-/**
- * Compact one-line reason string for use in notify/log lines and the "Trust"
- * prompt option. Long reason lists are truncated so the agent does not have
- * to scroll through a wall of text.
- */
-function summarizeReasons(decisionReason: string, limit = 240): string {
-	const trimmed = decisionReason.trim();
-	if (trimmed.length <= limit) return trimmed;
-	return `${trimmed.slice(0, limit - 1)}…`;
 }
 
 /**
@@ -344,6 +454,7 @@ function notifyDecision(
 	deniedPaths: string[] = [],
 	matchedPattern?: string,
 	nudgeMessage?: string,
+	decisionNote?: string,
 ): void {
 	// In inform mode show everything (including allow) so user sees the full picture.
 	// In enforce mode, allow is silent — only show non-allow decisions.
@@ -369,7 +480,11 @@ function notifyDecision(
 		// Use "path" for log/ask (not yet blocked); "blocked path" only for deny.
 		const pathLabel = action === "deny" ? "blocked path" : "path";
 		const context = buildContextSuffix(deniedPaths, matchedPattern, pathLabel);
-		ctx.ui.notify(`pi-controls: ${label}${policy}${cmd}${context}`, type);
+		const evalSuffix = decisionNote ? ` — eval: ${decisionNote}` : "";
+		ctx.ui.notify(
+			`pi-controls: ${label}${policy}${cmd}${context}${evalSuffix}`,
+			type,
+		);
 	}
 }
 
@@ -384,8 +499,8 @@ async function executeAction(
 	nudgeMessage?: string,
 	escalatedFromNudge?: string,
 	summary?: string,
-	decisionReason?: string,
 	approvalPersistence?: ApprovalPersistence,
+	decisionNote?: string,
 ): Promise<ToolCallEventResult | undefined> {
 	switch (action) {
 		case "allow":
@@ -416,20 +531,14 @@ async function executeAction(
 				return undefined;
 			}
 
-			// Interpreter-analysis fallbacks need a structured explanation. In
-			// particular, their targets are evaluated paths, not blocked paths.
 			const summaryText = summary ? ` (${summary})` : "";
 			const context = buildContextSuffix(deniedPaths, matchedPattern);
 			const detail = context.length > 0 ? context : "";
-			const title = decisionReason
-				? buildAnalysisAskTitle(toolName, command, deniedPaths, decisionReason)
-				: `[pi-controls] Allow ${toolName}${summaryText}?${detail}`;
+			const evalSuffix = decisionNote ? ` [eval: ${decisionNote}]` : "";
+			const title = `[pi-controls] Allow ${toolName}${summaryText}?${detail}${evalSuffix}`;
 			const choices = ["Allow", "Allow for session"];
 			if (approvalPersistence) {
 				choices.push("Allow for Project", "Allow Globally");
-			}
-			if (decisionReason && approvalPersistence) {
-				choices.push("Trust this pattern");
 			}
 			choices.push("Deny");
 			const choice = await ctx.ui.select(title, choices);
@@ -485,55 +594,13 @@ async function executeAction(
 					};
 				}
 			}
-			if (choice === "Trust this pattern" && approvalPersistence) {
-				try {
-					let policyName = approvalPersistence.policyNames[0];
-					if (approvalPersistence.policyNames.length > 1) {
-						const selected = await ctx.ui.select(
-							"[pi-controls] Choose policy for the trusted allow rule",
-							approvalPersistence.policyNames,
-						);
-						if (!selected) {
-							return {
-								block: true,
-								reason:
-									"[pi-controls] Blocked by user: no policy selected for trusted allow rule",
-							};
-						}
-						policyName = selected;
-					}
-					const rule = {
-						...approvalPersistence.rule,
-						policy: policyName,
-						allowUnanalyzed: true,
-					};
-					const saved = await addApprovalRule("global", ctx.cwd, rule);
-					if (saved.added) {
-						approvalPersistence.config.approvalRules = [
-							...(approvalPersistence.config.approvalRules ?? []),
-							rule,
-						];
-					}
-					ctx.ui.notify(
-						`[pi-controls] ${saved.added ? "Trusted" : "Already trusted"} allow rule for ${policyName}: ${saved.path}`,
-						"info",
-					);
-				} catch (error) {
-					return {
-						block: true,
-						reason: `[pi-controls] Could not save trusted allow rule: ${error}`,
-					};
-				}
-			}
 			return undefined;
 		}
 
 		case "deny": {
 			const cmdPart = command ? ` (${command.slice(0, 80)})` : "";
 			const context = buildContextSuffix(deniedPaths, matchedPattern);
-			const analysisNote = decisionReason
-				? ` Static analysis could not prove the source safe: ${decisionReason}.`
-				: "";
+			const evalSuffix = decisionNote ? ` [eval: ${decisionNote}]` : "";
 			const pathNote =
 				deniedPaths.length > 0
 					? ` The restriction is on the PATH${deniedPaths.length > 1 ? "S" : ""} ${deniedPaths.map((p) => `"${p}"`).join(", ")} — not on the tool. Do NOT retry with a different tool (read, ls, glob, cat, etc.); all access to these paths is blocked.`
@@ -543,7 +610,7 @@ async function executeAction(
 				: "";
 			return {
 				block: true,
-				reason: `[pi-controls] Access denied by policy: ${toolName}${cmdPart}${context}.${analysisNote}${pathNote}${nudgeNote}`,
+				reason: `[pi-controls] Access denied by policy: ${toolName}${cmdPart}${context}${evalSuffix}.${pathNote}${nudgeNote}`,
 			};
 		}
 	}
@@ -635,113 +702,78 @@ export async function handleToolCall(
 		const input = event.input as { command: string };
 		const stages = await parseCommand(input.command);
 		const cmd = stages.map((s) => s.command).join(" | ");
-		const interpreterConfig =
-			config.interpreterAnalysis === null
-				? { ...DEFAULT_INTERPRETER_ANALYSIS, enabled: false }
-				: (config.interpreterAnalysis ?? DEFAULT_INTERPRETER_ANALYSIS);
 
 		const matchResults: {
 			action: Action;
 			matchedPattern?: string;
 			nudgeMessage?: string;
 			ruleKey?: string;
-			allowUnanalyzed?: boolean;
 		}[] = [];
 		const targets: string[] = [];
-		const discoveredPaths: string[] = [];
-		const analysisReasons: string[] = [];
 		const policyNames = new Set<string>();
 		let policyName: string | null = null;
+		let approvalAllowed = false;
 
 		for (const stage of stages) {
-			let analyzedPaths: string[] = [];
-			const stageAnalysisReasons: string[] = [];
-			if (interpreterConfig.enabled) {
-				try {
-					const analysis = await analyzeCommandStageSource(stage, {
-						cwd,
-						maxDepth: interpreterConfig.maxDepth,
-						maxNodes: interpreterConfig.maxNodes,
-						maxSourceBytes: interpreterConfig.maxSourceBytes,
-					});
-					analyzedPaths = analysis.findings
-						.flatMap((finding) => (finding.path === null ? [] : [finding.path]))
-						.map((path) => normalizePath(path, cwd));
-					stageAnalysisReasons.push(
-						...analysis.unresolvedEffects,
-						...analysis.parseErrors,
-					);
-				} catch (error) {
-					stageAnalysisReasons.push(`Interpreter analysis failed: ${error}`);
-				}
-			}
-
-			const explicitPaths = [...stage.redirectFiles, ...stage.pathArgs].map(
-				(path) => normalizePath(path, cwd),
-			);
-			const stageTargets = [...new Set([...explicitPaths, ...analyzedPaths])];
-			discoveredPaths.push(...stageTargets);
+			const stageTargets = [
+				...new Set(
+					[...stage.redirectFiles, ...stage.pathArgs].map((path) =>
+						normalizePath(path, cwd),
+					),
+				),
+			];
 			if (stageTargets.length === 0) stageTargets.push(cwd);
 
-			const stageMatchResults: (typeof matchResults)[number][] = [];
 			for (const target of stageTargets) {
 				targets.push(target);
 				const resolved = resolvePolicy(target, cwd, config);
 				if (resolved) {
 					policyName = resolved.name;
 					policyNames.add(resolved.name);
+					const approved = matchingApprovalRule(
+						config,
+						resolved.name,
+						"bash",
+						stage.command,
+					);
+					if (approved) approvalAllowed = true;
 					const result =
-						matchingApprovalRule(
-							config,
-							resolved.name,
-							"bash",
-							stage.command,
-						) ?? matchRuleWithDetails(resolved.policy, "bash", stage.command);
-					const matchResult = {
+						approved ??
+						matchRuleWithDetails(resolved.policy, "bash", stage.command);
+					matchResults.push({
 						action: result.action,
 						matchedPattern: result.matchedPattern,
 						nudgeMessage: result.nudgeMessage,
 						ruleKey: nudgeKey("bash", result.matchedPattern),
-						allowUnanalyzed: result.allowUnanalyzed,
-					};
-					matchResults.push(matchResult);
-					stageMatchResults.push(matchResult);
+					});
 				}
-			}
-
-			const sourceIsExplicitlyTrusted =
-				stageAnalysisReasons.length > 0 &&
-				stageMatchResults.length > 0 &&
-				stageMatchResults.every((result) => result.allowUnanalyzed);
-			if (!sourceIsExplicitlyTrusted) {
-				analysisReasons.push(...stageAnalysisReasons);
 			}
 		}
 
 		const uniqueTargets = [...new Set(targets)];
-		const analyzedPathBlock = checkProtectedPaths(
-			[...new Set(discoveredPaths)],
-			config,
-		);
+		const analyzedPathBlock = checkProtectedPaths(uniqueTargets, config);
 		if (analyzedPathBlock) return analyzedPathBlock;
 
-		const uniqueAnalysisReasons = [...new Set(analysisReasons)];
-		const interpreterWasInvoked = stages.some(
-			(stage) => stage.embeddedSources.length > 0,
+		// Eval classification (Decisions API): upgrade-only backstop for
+		// inline evals. Skipped entirely when unconfigured or approved.
+		const evalResult = await classifyEvalSources(
+			ctx,
+			stages,
+			cmd,
+			cwd,
+			uniqueTargets,
+			config,
+			approvalAllowed,
+			sessionAllowsBashMatches(cmd, uniqueTargets),
 		);
-		const earlyTrustedAllow =
-			uniqueAnalysisReasons.length > 0 &&
-			interpreterWasInvoked &&
-			matchResults.length > 0 &&
-			matchResults.every(
-				(result) =>
-					result.action === "allow" && result.allowUnanalyzed === true,
-			);
-		if (uniqueAnalysisReasons.length > 0 && !earlyTrustedAllow) {
-			matchResults.push({ action: interpreterConfig.unknownAction });
-		}
+		const evalActions = evalResult.outcomes.map((outcome) => outcome.action);
+		const evalTraces = evalResult.outcomes.map((outcome) => outcome.trace);
 
-		if (matchResults.length === 0) {
+		if (
+			matchResults.length === 0 &&
+			evalActions.length === 0 &&
+			!evalResult.skipped
+		) {
 			await logDecision({
 				ts: new Date().toISOString(),
 				tool: "bash",
@@ -754,7 +786,10 @@ export async function handleToolCall(
 			return undefined;
 		}
 
-		const actions = matchResults.map((result) => result.action);
+		const actions = [
+			...matchResults.map((result) => result.action),
+			...evalActions,
+		];
 		const finalAction = mostRestrictive(actions);
 		const matchedPattern = matchResults
 			.filter(
@@ -771,7 +806,18 @@ export async function handleToolCall(
 		const bashNudgeKey =
 			nudgeMatch?.ruleKey ?? nudgeKey("bash", matchedPattern);
 		const deniedTargets = finalAction === "deny" ? uniqueTargets : [];
-		const analysisReason = uniqueAnalysisReasons.join("; ");
+
+		// Cite the eval rationale when an eval verdict is binding or tied
+		// with the location verdict (never for silent allows).
+		const evalBinding =
+			evalActions.length > 0 && mostRestrictive(evalActions) === finalAction;
+		const evalNote =
+			evalBinding && finalAction !== "allow"
+				? evalResult.outcomes
+						.filter((outcome) => outcome.action === finalAction)
+						.map((outcome) => outcome.note)
+						.join("; ") || undefined
+				: undefined;
 
 		await logDecision({
 			ts: new Date().toISOString(),
@@ -781,7 +827,8 @@ export async function handleToolCall(
 			targets: uniqueTargets,
 			policyName,
 			action: finalAction,
-			reason: analysisReason || undefined,
+			evals: evalTraces.length > 0 ? evalTraces : undefined,
+			evalSkipped: evalResult.skipped,
 		});
 		notifyDecision(
 			ctx,
@@ -793,6 +840,7 @@ export async function handleToolCall(
 			deniedTargets,
 			matchedPattern,
 			nudgeMessage,
+			evalNote,
 		);
 		if (mode === "inform") return undefined;
 		const effectiveBashAction = applyNudgeTimeout(
@@ -805,9 +853,7 @@ export async function handleToolCall(
 			finalAction === "nudge" && effectiveBashAction === "deny"
 				? nudgeMessage
 				: undefined;
-		const summary = analysisReason
-			? `${cmd.slice(0, 80)}; unresolved source: ${summarizeReasons(analysisReason, 160)}`
-			: cmd.slice(0, 120) || "bash";
+		const summary = cmd.slice(0, 120) || "bash";
 		const approvalPersistence =
 			stages.length === 1 && policyNames.size > 0
 				? {
@@ -815,7 +861,6 @@ export async function handleToolCall(
 							action: "allow" as const,
 							tool: "bash",
 							pattern: suggestSessionPattern(stages[0].command),
-							allowUnanalyzed: true,
 						},
 						config,
 						policyNames: [...policyNames].sort(),
@@ -834,8 +879,8 @@ export async function handleToolCall(
 			nudgeMessage,
 			bashEscalatedFromNudge,
 			summary,
-			analysisReason || undefined,
 			approvalPersistence,
+			evalNote,
 		);
 	}
 
@@ -935,7 +980,6 @@ export async function handleToolCall(
 		nudgeMessage,
 		escalatedFromNudge,
 		summary,
-		undefined,
 		approvalPersistence,
 	);
 }

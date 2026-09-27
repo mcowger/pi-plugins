@@ -27,16 +27,211 @@ export interface Rule {
 	/** Required when action is "nudge": the reminder message injected into the tool result. */
 	message?: string;
 	/**
-	 * Permit a matching `allow` Bash rule to bypass the fallback action for
-	 * interpreter source that cannot be statically analyzed. Use only for a
-	 * command pattern whose source execution you explicitly trust.
-	 */
-	allowUnanalyzed?: boolean;
-	/**
 	 * Optional policy name for an approval saved from an interactive prompt.
 	 * Omitted rules apply to every policy; interactive approvals always set it.
 	 */
 	policy?: string;
+}
+
+/**
+ * Fallback actions for eval classification edge cases. Narrower than
+ * Action: only terminal enforcement outcomes make sense here.
+ */
+export type DecisionsFallbackAction = "allow" | "ask" | "deny";
+
+export interface DecisionsWeights {
+	destructive: number;
+	obfuscated: number;
+	network: number;
+	exec: number;
+	inferenceCall: number;
+	writeSensitive: number;
+	writeOutside: number;
+	writeUnknown: number;
+	readSensitive: number;
+	readUnknown: number;
+}
+
+export interface DecisionsConfig {
+	/** Full endpoint URL of the Decisions API. */
+	url: string;
+	/** Name of the env var holding the bearer token (never the token itself). */
+	tokenEnv: string;
+	/** Model requested from the Decisions router. */
+	model: string;
+	timeoutMs: number;
+	maxSourceBytes: number;
+	/** Action when eval shape is detected but source is not recoverable. */
+	unavailableAction: DecisionsFallbackAction;
+	/** Action on API/network/auth/timeout/malformed failure. */
+	errorAction: DecisionsFallbackAction;
+	/** noul p >= this → YES. */
+	yesThreshold: number;
+	/** noul p <= this → NO; between → UNCERTAIN. */
+	noThreshold: number;
+	/** choice P(top) >= this → confident label, else mass check. */
+	choiceConfidence: number;
+	/** Risky-label mass at/above this → UNCERTAIN (ask); below → top label. */
+	riskyMassThreshold: number;
+	/** Backstop score >= this → ask (the backstop never denies). */
+	backstopThreshold: number;
+	weights: DecisionsWeights;
+}
+
+export const DEFAULT_DECISIONS: DecisionsConfig = {
+	url: "https://openrouter.ai/api/alpha/decisions",
+	tokenEnv: "OPENROUTER_API_KEY",
+	model: "typesafe/jev-1.13",
+	timeoutMs: 15000,
+	maxSourceBytes: 32768,
+	unavailableAction: "ask",
+	errorAction: "ask",
+	yesThreshold: 0.7,
+	noThreshold: 0.3,
+	choiceConfidence: 0.6,
+	riskyMassThreshold: 0.35,
+	backstopThreshold: 40,
+	weights: {
+		destructive: 100,
+		obfuscated: 40,
+		network: 25,
+		exec: 15,
+		inferenceCall: 10,
+		writeSensitive: 50,
+		writeOutside: 30,
+		writeUnknown: 20,
+		readSensitive: 40,
+		readUnknown: 20,
+	},
+};
+
+function validCount(value: unknown, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0
+		? value
+		: fallback;
+}
+
+function validWeight(value: unknown, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0
+		? value
+		: fallback;
+}
+
+function validFallback(
+	value: unknown,
+	fallback: DecisionsFallbackAction,
+): DecisionsFallbackAction {
+	return value === "allow" || value === "ask" || value === "deny"
+		? value
+		: fallback;
+}
+
+/**
+ * Resolve a raw (possibly partial) decisions block over the code defaults.
+ * Returns null when absent or not an object — the feature stays off.
+ * Invalid individual fields fall back to their defaults; the applied values
+ * are always visible in the eval log trace.
+ */
+export function resolveDecisions(raw: unknown): DecisionsConfig | null {
+	if (raw === undefined || raw === null) return null;
+	if (typeof raw !== "object" || Array.isArray(raw)) return null;
+	const input = raw as Record<string, unknown>;
+	const defaults = structuredClone(DEFAULT_DECISIONS);
+
+	const yesThreshold =
+		typeof input.yesThreshold === "number" &&
+		Number.isFinite(input.yesThreshold)
+			? input.yesThreshold
+			: defaults.yesThreshold;
+	const noThreshold =
+		typeof input.noThreshold === "number" && Number.isFinite(input.noThreshold)
+			? input.noThreshold
+			: defaults.noThreshold;
+	const thresholdsValid =
+		yesThreshold > noThreshold && noThreshold >= 0 && yesThreshold <= 1;
+	const choiceConfidence =
+		typeof input.choiceConfidence === "number" &&
+		Number.isFinite(input.choiceConfidence) &&
+		input.choiceConfidence > 0 &&
+		input.choiceConfidence <= 1
+			? input.choiceConfidence
+			: defaults.choiceConfidence;
+	const riskyMassThreshold =
+		typeof input.riskyMassThreshold === "number" &&
+		Number.isFinite(input.riskyMassThreshold) &&
+		input.riskyMassThreshold > 0 &&
+		input.riskyMassThreshold <= 1
+			? input.riskyMassThreshold
+			: defaults.riskyMassThreshold;
+
+	const rawWeights =
+		input.weights !== null && typeof input.weights === "object"
+			? (input.weights as Record<string, unknown>)
+			: {};
+	const weights: DecisionsWeights = {
+		destructive: validWeight(
+			rawWeights.destructive,
+			defaults.weights.destructive,
+		),
+		obfuscated: validWeight(rawWeights.obfuscated, defaults.weights.obfuscated),
+		network: validWeight(rawWeights.network, defaults.weights.network),
+		exec: validWeight(rawWeights.exec, defaults.weights.exec),
+		inferenceCall: validWeight(
+			rawWeights.inferenceCall,
+			defaults.weights.inferenceCall,
+		),
+		writeSensitive: validWeight(
+			rawWeights.writeSensitive,
+			defaults.weights.writeSensitive,
+		),
+		writeOutside: validWeight(
+			rawWeights.writeOutside,
+			defaults.weights.writeOutside,
+		),
+		writeUnknown: validWeight(
+			rawWeights.writeUnknown,
+			defaults.weights.writeUnknown,
+		),
+		readSensitive: validWeight(
+			rawWeights.readSensitive,
+			defaults.weights.readSensitive,
+		),
+		readUnknown: validWeight(
+			rawWeights.readUnknown,
+			defaults.weights.readUnknown,
+		),
+	};
+
+	return {
+		url:
+			typeof input.url === "string" && input.url.length > 0
+				? input.url
+				: defaults.url,
+		tokenEnv:
+			typeof input.tokenEnv === "string" && input.tokenEnv.length > 0
+				? input.tokenEnv
+				: defaults.tokenEnv,
+		model:
+			typeof input.model === "string" && input.model.length > 0
+				? input.model
+				: defaults.model,
+		timeoutMs: validCount(input.timeoutMs, defaults.timeoutMs),
+		maxSourceBytes: validCount(input.maxSourceBytes, defaults.maxSourceBytes),
+		unavailableAction: validFallback(
+			input.unavailableAction,
+			defaults.unavailableAction,
+		),
+		errorAction: validFallback(input.errorAction, defaults.errorAction),
+		yesThreshold: thresholdsValid ? yesThreshold : defaults.yesThreshold,
+		noThreshold: thresholdsValid ? noThreshold : defaults.noThreshold,
+		choiceConfidence,
+		riskyMassThreshold,
+		backstopThreshold: validCount(
+			input.backstopThreshold,
+			defaults.backstopThreshold,
+		),
+		weights,
+	};
 }
 
 export interface Policy {
@@ -110,19 +305,6 @@ export interface NudgeTimeout {
 	windowSeconds: number;
 }
 
-export interface InterpreterAnalysisConfig {
-	/** Enable analysis of source supplied to Python, Node, Bun, and shell wrappers. */
-	enabled: boolean;
-	/** Conservative action when analysis cannot prove all effects and targets. */
-	unknownAction: "ask" | "deny";
-	/** Maximum embedded source size accepted for analysis. */
-	maxSourceBytes: number;
-	/** Maximum nested shell-wrapper depth. */
-	maxDepth: number;
-	/** Maximum syntax-tree nodes visited per source. */
-	maxNodes: number;
-}
-
 export interface ControlsConfig {
 	policies?: Record<string, Policy>;
 	locations?: Record<string, string>;
@@ -162,8 +344,11 @@ export interface ControlsConfig {
 	 * This is the correct place to protect sensitive files from ALL tools.
 	 */
 	pathProtection?: Record<string, Action> | null;
-	/** Conservative static analysis for source hidden in interpreter invocations. */
-	interpreterAnalysis?: Partial<InterpreterAnalysisConfig> | null;
+	/**
+	 * Optional eval classification via the Decisions API. Absent/null =
+	 * feature off: bash enforcement is location policy only.
+	 */
+	decisions?: DecisionsConfig | null;
 }
 
 export interface ControlsResolvedConfig {
@@ -176,38 +361,7 @@ export interface ControlsResolvedConfig {
 	agentTimeout: AgentTimeout | null;
 	nudgeTimeout: NudgeTimeout | null;
 	pathProtection: Record<string, Action> | null;
-	/** Optional here so hand-built configs remain source compatible; the loader always supplies defaults. */
-	interpreterAnalysis?: InterpreterAnalysisConfig | null;
-}
-
-export const DEFAULT_INTERPRETER_ANALYSIS: InterpreterAnalysisConfig = {
-	enabled: true,
-	unknownAction: "ask",
-	maxSourceBytes: 256 * 1024,
-	maxDepth: 4,
-	maxNodes: 10_000,
-};
-
-function resolveInterpreterAnalysis(
-	value: Partial<InterpreterAnalysisConfig> | null | undefined,
-): InterpreterAnalysisConfig | null {
-	if (value === null) return null;
-	return {
-		enabled: value?.enabled !== false,
-		unknownAction: value?.unknownAction === "deny" ? "deny" : "ask",
-		maxSourceBytes:
-			typeof value?.maxSourceBytes === "number" && value.maxSourceBytes > 0
-				? value.maxSourceBytes
-				: DEFAULT_INTERPRETER_ANALYSIS.maxSourceBytes,
-		maxDepth:
-			typeof value?.maxDepth === "number" && value.maxDepth >= 0
-				? value.maxDepth
-				: DEFAULT_INTERPRETER_ANALYSIS.maxDepth,
-		maxNodes:
-			typeof value?.maxNodes === "number" && value.maxNodes > 0
-				? value.maxNodes
-				: DEFAULT_INTERPRETER_ANALYSIS.maxNodes,
-	};
+	decisions: DecisionsConfig | null;
 }
 
 const DEFAULTS: ControlsResolvedConfig = {
@@ -219,7 +373,7 @@ const DEFAULTS: ControlsResolvedConfig = {
 	agentTimeout: null,
 	nudgeTimeout: null,
 	pathProtection: null,
-	interpreterAnalysis: DEFAULT_INTERPRETER_ANALYSIS,
+	decisions: null,
 };
 
 // ─── File discovery ───────────────────────────────────────────────────────────
@@ -459,7 +613,10 @@ export class ControlsConfigLoader {
 				...(localCfg?.approvalRules ?? []),
 			],
 			policies: expandPolicies(raw.policies),
-			interpreterAnalysis: resolveInterpreterAnalysis(raw.interpreterAnalysis),
+			// decisions resolves code defaults over the deep-merged block
+			// (global → local), so partial blocks and single-weight
+			// overrides work.
+			decisions: resolveDecisions(raw.decisions),
 		};
 	}
 

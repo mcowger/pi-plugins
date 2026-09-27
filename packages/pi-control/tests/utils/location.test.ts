@@ -17,6 +17,7 @@ const config: ControlsResolvedConfig = {
 	agentTimeout: null,
 	nudgeTimeout: null,
 	pathProtection: null,
+	decisions: null,
 };
 
 const cwd = "/home/user";
@@ -80,6 +81,7 @@ describe("resolvePolicy — cwd special location key", () => {
 		agentTimeout: null,
 		nudgeTimeout: null,
 		pathProtection: null,
+		decisions: null,
 	};
 
 	it("matches the cwd directory itself", () => {
