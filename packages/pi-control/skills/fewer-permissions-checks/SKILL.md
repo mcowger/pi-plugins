@@ -92,7 +92,7 @@ Use `jq -r` only if the user wants a human-readable table. Do not use `head` as 
 
 ## 4. Assess candidates conservatively
 
-For every candidate with repeated evidence, inspect the active pi-controls configuration and explain why it is being prompted before proposing a rule. The log records the resolved policy name, tool, command (for bash), and targets, but **does not record** the rule that matched or whether the user selected Allow, Allow for session, or Deny.
+For every candidate with repeated evidence, inspect the active pi-controls configuration and explain why it is being prompted before proposing a rule. The log records the resolved policy name, tool, command (for bash), and targets, but **does not record** the rule that matched or whether the user selected Allow, Allow for session, or Deny. Bash entries may also carry an `evals` array when inline-eval classification ran — each trace records its `evaluation.verdict` and either the Stage-1 `rule` that fired (e.g. `write-out-of-scope`) or the Stage-2 backstop score, which is the reason an eval-flavored ask/deny appeared.
 
 Recommend an `allow` rule only when all of these are true:
 
@@ -111,8 +111,6 @@ For bash, derive a pattern only from the stable safe portion of commands. For ex
 ```
 
 but repeated `git push origin main` requests should normally remain an explicit confirmation. For non-bash tools, propose the exact tool name, not a broad glob, unless the evidence and risk profile justify it.
-
-If the `reason` field indicates unresolved interpreter/source analysis, do not add an allow rule merely to eliminate that prompt. Explain that doing so could bypass conservative static-analysis protection and suggest reviewing the underlying command or interpreter-analysis settings instead.
 
 ## 5. Present the result
 

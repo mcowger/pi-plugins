@@ -113,51 +113,47 @@ describe("parseCommand", () => {
 				static: true,
 			},
 		]);
-		expect(stages[0].analysisIncomplete).toBe(false);
 	});
 
-	it("marks expanded arguments as incomplete", async () => {
+	it("marks expanded arguments as dynamic", async () => {
 		const stages = await parseCommand(`python3 -c "$SOURCE"`);
 		expect(stages[0].args[2].static).toBe(false);
-		expect(stages[0].analysisIncomplete).toBe(true);
 	});
 
-	it("extracts a quoted heredoc body as embedded source", async () => {
+	it("harvests static heredoc bodies as stdin sources", async () => {
 		const stages = await parseCommand(
 			"python3 - <<'PY'\nopen('/outside/x', 'w')\nPY",
 		);
 		expect(stages).toHaveLength(1);
 		expect(stages[0].command).toBe("python3 -");
+		expect(stages[0].redirectFiles).toEqual([]);
 		expect(stages[0].embeddedSources).toEqual([
-			{
-				kind: "heredoc",
-				text: "open('/outside/x', 'w')\n",
-				static: true,
-			},
+			{ kind: "heredoc", text: "open('/outside/x', 'w')\n", static: true },
 		]);
-		expect(stages[0].analysisIncomplete).toBe(false);
 	});
 
-	it("extracts a here-string as embedded source", async () => {
+	it("marks heredocs with expansions as dynamic stdin sources", async () => {
+		const stages = await parseCommand("python3 <<EOF\necho $HOME\nEOF");
+		expect(stages[0].embeddedSources).toEqual([
+			{ kind: "heredoc", text: "echo $HOME\n", static: false },
+		]);
+	});
+
+	it("harvests here-strings as stdin sources", async () => {
 		const stages = await parseCommand(
 			`python3 - <<< 'open("/outside/x", "w")'`,
 		);
+		expect(stages[0].redirectFiles).toEqual([]);
 		expect(stages[0].embeddedSources).toEqual([
-			{
-				kind: "herestring",
-				text: `open("/outside/x", "w")`,
-				static: true,
-			},
+			{ kind: "herestring", text: 'open("/outside/x", "w")', static: true },
 		]);
 	});
 
-	it("marks indirect heredoc pipelines as incomplete", async () => {
+	it("keeps heredoc pipelines as a single stage", async () => {
 		const stages = await parseCommand(
 			"cat <<EOF | python3 -\nopen('/outside/x', 'w')\nEOF",
 		);
-		expect(stages[0].embeddedSources[0]?.text).toBe(
-			"open('/outside/x', 'w')\n",
-		);
-		expect(stages[0].analysisIncomplete).toBe(true);
+		expect(stages).toHaveLength(1);
+		expect(stages[0].command).toBe("cat");
 	});
 });

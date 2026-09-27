@@ -9,8 +9,7 @@
  *   - Static source supplied through heredocs and here-strings
  *
  * Falls back to a simple tokenizer when Tree-sitter is unavailable or parsing
- * cannot identify a command. Fallback results are explicitly marked incomplete
- * so interpreter analysis cannot mistake them for fully understood input.
+ * cannot identify a command.
  */
 
 import type {
@@ -43,8 +42,6 @@ export interface CommandStage {
 	pathArgs: string[];
 	/** Source supplied directly to the command's standard input. */
 	embeddedSources: EmbeddedSource[];
-	/** True when parsing or static shell-word decoding was incomplete. */
-	analysisIncomplete: boolean;
 }
 
 // ─── Module state ────────────────────────────────────────────────────────────
@@ -71,7 +68,7 @@ export async function initBashParser(
 			parserUnavailable = true;
 			onWarning(
 				`[pi-controls] Tree-sitter Bash parser failed to load (${err}). ` +
-					"Falling back to incomplete token analysis for Bash commands.",
+					"Falling back to token analysis for Bash commands.",
 			);
 		}
 	})();
@@ -265,82 +262,53 @@ function redirectNodes(node: SyntaxNode): SyntaxNode[] {
 		.filter((child) => child !== null);
 }
 
-function extractRedirects(redirects: SyntaxNode[]): Pick<
-	CommandStage,
-	"redirectFiles" | "embeddedSources"
-> & {
-	incomplete: boolean;
-} {
+function extractRedirects(
+	redirects: SyntaxNode[],
+): Pick<CommandStage, "redirectFiles" | "embeddedSources"> {
 	const redirectFiles: string[] = [];
 	const embeddedSources: EmbeddedSource[] = [];
-	let incomplete = false;
 
 	for (const redirect of redirects) {
-		switch (redirect.type) {
-			case "file_redirect": {
-				// Preserve existing behavior: redirects with an explicit numeric file
-				// descriptor (2>/dev/null, 2>&1) are not policy targets.
-				if (redirect.childForFieldName("descriptor")) break;
-				const destination = redirect.childForFieldName("destination");
-				if (!destination) {
-					incomplete = true;
-					break;
-				}
-				const argument = argumentFromNode(destination);
-				if (argument.static) redirectFiles.push(argument.value);
-				else incomplete = true;
-				break;
-			}
-			case "heredoc_redirect": {
-				const body = namedChildren(redirect).find(
-					(child) => child.type === "heredoc_body",
-				);
-				if (body) {
-					embeddedSources.push({
-						kind: "heredoc",
-						text: body.text,
-						static: !containsDynamicShellNode(body),
-					});
-				} else {
-					incomplete = true;
-				}
-				// A pipeline embedded in the redirect node means the heredoc is
-				// connected to another stage indirectly. Preserve the source on its
-				// direct command but mark the overall analysis incomplete.
-				if (
-					namedChildren(redirect).some(
-						(child) => child.type === "pipeline" || child.type === "command",
-					)
-				) {
-					incomplete = true;
-				}
-				break;
-			}
-			case "herestring_redirect": {
-				const source = namedChildren(redirect).at(-1);
-				if (!source) {
-					incomplete = true;
-					break;
-				}
-				const argument = argumentFromNode(source);
-				embeddedSources.push({
-					kind: "herestring",
-					text: argument.value,
-					static: argument.static,
-				});
-				if (!argument.static) incomplete = true;
-				break;
-			}
+		if (redirect.type === "file_redirect") {
+			// Redirects with an explicit numeric file descriptor (2>/dev/null, 2>&1)
+			// are not policy targets.
+			if (redirect.childForFieldName("descriptor")) continue;
+			const destination = redirect.childForFieldName("destination");
+			if (!destination) continue;
+			const argument = argumentFromNode(destination);
+			if (argument.static) redirectFiles.push(argument.value);
+			continue;
+		}
+		if (redirect.type === "heredoc_redirect") {
+			const body = namedChildren(redirect).find(
+				(child) => child.type === "heredoc_body",
+			);
+			if (!body) continue;
+			embeddedSources.push({
+				kind: "heredoc",
+				text: body.text,
+				static: !containsDynamicShellNode(body),
+			});
+			continue;
+		}
+		if (redirect.type === "herestring_redirect") {
+			const source = namedChildren(redirect).at(-1);
+			if (!source) continue;
+			const argument = argumentFromNode(source);
+			embeddedSources.push({
+				kind: "herestring",
+				text: argument.value,
+				static: argument.static,
+			});
 		}
 	}
 
-	return { redirectFiles, embeddedSources, incomplete };
+	return { redirectFiles, embeddedSources };
 }
 
 function buildStage(
 	node: SyntaxNode,
 	inheritedRedirects: SyntaxNode[],
-	rootHasError: boolean,
 ): CommandStage {
 	const ownRedirects = redirectNodes(node);
 	const redirects = [...ownRedirects, ...inheritedRedirects];
@@ -364,51 +332,46 @@ function buildStage(
 		}
 	}
 
-	const extracted = extractRedirects(redirects);
+	const { redirectFiles, embeddedSources } = extractRedirects(redirects);
 	const pathArgs = pathArgsForCommand(args);
 
 	return {
 		command: args.map((argument) => argument.value).join(" "),
 		args,
-		redirectFiles: extracted.redirectFiles,
+		redirectFiles,
 		pathArgs,
-		embeddedSources: extracted.embeddedSources,
-		analysisIncomplete:
-			rootHasError ||
-			extracted.incomplete ||
-			args.some((argument) => !argument.static),
+		embeddedSources,
 	};
 }
 
 function collectStages(
 	node: SyntaxNode,
 	stages: CommandStage[],
-	rootHasError: boolean,
 	inheritedRedirects: SyntaxNode[] = [],
 ): void {
 	if (node.type === "redirected_statement") {
 		const body = node.childForFieldName("body");
 		const redirects = redirectNodes(node);
-		if (body) collectStages(body, stages, rootHasError, redirects);
+		if (body) collectStages(body, stages, redirects);
 		return;
 	}
 
 	if (node.type === "command") {
-		stages.push(buildStage(node, inheritedRedirects, rootHasError));
+		stages.push(buildStage(node, inheritedRedirects));
 		// Commands nested in substitutions execute as separate stages.
 		for (const child of namedChildren(node)) {
 			if (
 				child.type === "command_substitution" ||
 				child.type === "process_substitution"
 			) {
-				collectStages(child, stages, rootHasError);
+				collectStages(child, stages);
 			}
 		}
 		return;
 	}
 
 	for (const child of namedChildren(node)) {
-		collectStages(child, stages, rootHasError, inheritedRedirects);
+		collectStages(child, stages, inheritedRedirects);
 	}
 }
 
@@ -421,14 +384,14 @@ export async function parseCommand(command: string): Promise<CommandStage[]> {
 			if (tree) {
 				try {
 					const stages: CommandStage[] = [];
-					collectStages(tree.rootNode, stages, tree.rootNode.hasError);
+					collectStages(tree.rootNode, stages);
 					if (stages.length > 0) return stages;
 				} finally {
 					tree.delete();
 				}
 			}
 		} catch {
-			// Fall through to the explicitly incomplete tokenizer fallback.
+			// Fall through to the tokenizer fallback.
 		}
 	}
 	return regexFallback(command);
@@ -444,7 +407,6 @@ function regexFallback(command: string): CommandStage[] {
 			redirectFiles: [],
 			pathArgs,
 			embeddedSources: [],
-			analysisIncomplete: true,
 		},
 	];
 }
