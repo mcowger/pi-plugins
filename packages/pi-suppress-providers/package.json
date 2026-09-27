@@ -1,7 +1,7 @@
 {
 	"name": "@mcowger/pi-suppress-providers",
 	"author": "Matt Cowger",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"description": "Pi extension that limits which providers appear in model selection by suppressing env vars for non-enabled providers",
 	"license": "MIT",
 	"type": "module",
