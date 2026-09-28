@@ -108,10 +108,16 @@ Example:
 | `flex-status` | Reports Flex mode and the active `serviceTier`. |
 | `long-context` | Toggles or sets long context. Repeating `on` or `off` is safe. |
 | `long-context-status` | Reports long-context state and the current context window. |
-| `web-search` | Toggles or sets web search. |
-| `web-search-status` | Reports the web-search setting. |
+| `web-search` | Toggles or sets web search. Only registered with `--microgpt-web-search`. |
+| `web-search-status` | Reports the web-search setting. Only registered with `--microgpt-web-search`. |
 
 All four settings start disabled in each session. Long context is restored when switching models and at session shutdown. Fast and Flex modes are mutually exclusive and add their `service_tier` only to requests for the active supported model. Web search is callable only on a supported model; its `enabled` field reports the session setting, while `supported` reports model eligibility.
+
+## Extension flags
+
+| Flag | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `microgpt-web-search` | boolean | `false` | Registers the `web_search` tool and the `web-search` / `web-search-status` commands. Without `--microgpt-web-search` on the Pi command line, web search is completely hidden: the tool is invisible to the model and the commands are unknown. |
 
 Supported models use the `openai-responses` or `openai-codex-responses` API and a GPT 5.5+ model ID. Provider names do not affect eligibility. Flex mode narrows this further to OpenAI's flex SKU: within plugin scope, `gpt-6-astra` and `gpt-5.6-sol`/`terra`/`luna` (plus snapshots and suffixes). `gpt-5.5`, `gpt-5.4` and earlier, `gpt-5.6-cyber`, `gpt-4.1`, fine-tuned models, and embeddings report `supported: false` for `flex`.
 
@@ -146,7 +152,8 @@ type ApplyPatchDetails = {
 
 ### `web_search`
 
-Available after `/web-search on` on supported models. Each operation is optional; send the fields needed for the request.
+Only registered when Pi starts with `--microgpt-web-search`. Then available
+after `/web-search on` on supported models. Each operation is optional; send the fields needed for the request.
 
 ```ts
 type WebSearchInput = {

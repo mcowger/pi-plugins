@@ -3,6 +3,7 @@ import {
 	FAST_SERVICE_TIER,
 	FLEX_SERVICE_TIER,
 	MAX_CONTEXT_WINDOW,
+	WEB_SEARCH_FLAG,
 	isFlexSupportedModel,
 	isResponsesModel,
 	isSupportedModel,
@@ -43,19 +44,30 @@ test("Codex tools use the same shared model restriction", () => {
 	expect(isSupportedModel(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.4-codex" }))).toBe(false);
 });
 
-function mockPi() {
+function mockPi(initialFlags: Record<string, boolean | string> = {}) {
 	const commands = new Map<string, any>();
 	const handlers = new Map<string, any>();
 	const tools = new Map<string, any>();
+	const flags = new Map<string, any>();
+	const flagValues = new Map<string, boolean | string>(Object.entries(initialFlags));
 	let activeTools = ["edit", "write"];
 	let runtimeReady = false;
 	return {
 		commands,
 		handlers,
 		tools,
+		flags,
 		registerCommand(name: string, command: any) { commands.set(name, command); },
 		registerTool(tool: any) { tools.set(tool.name, tool); },
 		registerShortcut() {},
+		registerFlag(name: string, options: any) {
+			flags.set(name, options);
+			if (options.default !== undefined && !flagValues.has(name)) flagValues.set(name, options.default);
+		},
+		getFlag(name: string) {
+			if (!flags.has(name)) return undefined;
+			return flagValues.get(name);
+		},
 		activateRuntime() { runtimeReady = true; },
 		getActiveTools() {
 			if (!runtimeReady) throw new Error("Extension runtime not initialized");
@@ -105,7 +117,7 @@ test("commands emit machine-readable JSON and support JSON requests", async () =
 });
 
 test("status aliases return JSON errors for malformed JSON requests", async () => {
-	const pi = mockPi();
+	const pi = mockPi({ [WEB_SEARCH_FLAG]: true });
 	piMicroGpt(pi as any);
 	const ctx = context(model({ provider: "proxy", api: "openai-responses", id: "gpt-5.5" }));
 	for (const name of ["long-context-status", "fast-status", "flex-status", "web-search-status"]) {
@@ -120,8 +132,27 @@ test("status aliases return JSON errors for malformed JSON requests", async () =
 	}
 });
 
-test("web search is off by default and can be enabled for the session", async () => {
+test("web search is hidden without the opt-in flag", async () => {
 	const pi = mockPi();
+	piMicroGpt(pi as any);
+	pi.activateRuntime();
+	expect(pi.flags.get("microgpt-web-search")).toMatchObject({ type: "boolean", default: false });
+	expect(pi.commands.get("web-search")).toBeUndefined();
+	expect(pi.commands.get("web-search-status")).toBeUndefined();
+	expect(pi.tools.get("web_search")).toBeUndefined();
+	// Other features still register.
+	for (const name of ["long-context", "long-context-status", "fast", "fast-status", "flex", "flex-status"]) {
+		expect(pi.commands.get(name)).toBeDefined();
+	}
+	expect(pi.tools.get("apply_patch")).toBeDefined();
+	// Session lifecycle keeps web_search out of the active tools.
+	const ctx = context(model({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.5" }));
+	await pi.handlers.get("session_start")({}, ctx);
+	expect(pi.getActiveTools()).not.toContain("web_search");
+});
+
+test("web search is off by default and can be enabled for the session", async () => {
+	const pi = mockPi({ [WEB_SEARCH_FLAG]: true });
 	piMicroGpt(pi as any);
 	pi.activateRuntime();
 	const ctx = context(model({ provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.5" }));
@@ -129,6 +160,11 @@ test("web search is off by default and can be enabled for the session", async ()
 	expect(JSON.parse(ctx.notifications[0]).enabled).toBe(false);
 	await pi.commands.get("web-search").handler("on", ctx);
 	expect(JSON.parse(ctx.notifications[1]).enabled).toBe(true);
+	expect(pi.getActiveTools()).toContain("web_search");
+	await pi.handlers.get("session_start")({}, ctx);
+	await pi.commands.get("web-search").handler("status", ctx);
+	expect(JSON.parse(ctx.notifications.at(-1)!).enabled).toBe(false);
+	expect(pi.getActiveTools()).not.toContain("web_search");
 });
 
 

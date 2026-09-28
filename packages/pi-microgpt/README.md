@@ -154,7 +154,16 @@ stays disabled too.
 
 ## Web search
 
-Web search is off by default and is session-only. Enable it explicitly:
+Web search is opt-in and off by default. Start Pi with the extension flag to
+register the tool and commands at all:
+
+```sh
+pi --microgpt-web-search
+```
+
+Without the flag, the `web_search` tool and the `/web-search` commands do
+not exist. With the flag, web search behaves like the other session toggles:
+it is off in every new session until enabled explicitly:
 
 ```text
 /web-search on
@@ -226,7 +235,8 @@ aliases accept a plain request ID too:
 ```
 
 The plugin does not persist long-context, Fast mode, Flex mode, or web-search state.
-Every session starts with all four disabled.
+Every session starts with all four disabled. Web search additionally requires
+the `--microgpt-web-search` extension flag on every run.
 
 ## Development
 

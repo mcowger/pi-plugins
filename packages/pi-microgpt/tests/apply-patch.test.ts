@@ -16,6 +16,8 @@ function mockPi() {
 		registerCommand(name: string, command: any) { commands.set(name, command); },
 		registerTool(tool: any) { tools.set(tool.name, tool); },
 		registerShortcut() {},
+		registerFlag() {},
+		getFlag() { return undefined; },
 		getActiveTools: () => ["edit", "write"],
 		setActiveTools() {},
 		on(name: string, handler: any) { handlers.set(name, handler); },

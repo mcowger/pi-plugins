@@ -139,7 +139,16 @@ type ToolContext = ExtensionContext & {
 	sessionManager: ExtensionContext["sessionManager"];
 };
 
+export const WEB_SEARCH_FLAG = "microgpt-web-search";
+
 export default function piMicroGpt(pi: ExtensionAPI): void {
+	pi.registerFlag(WEB_SEARCH_FLAG, {
+		description: "Enable the Codex web search tool and /web-search commands",
+		type: "boolean",
+		default: false,
+	});
+	const webSearchOptIn = pi.getFlag(WEB_SEARCH_FLAG) === true;
+
 	let longContextModel: PiModel | undefined;
 	let previousContextWindow = 0;
 	let fastEnabled = false;
@@ -188,7 +197,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 			for (const tool of removedTools) active.add(tool);
 			removedTools.clear();
 		}
-		if (isSupportedModel(model) && webSearchEnabled && webSearchSelected) active.add("web_search");
+		if (webSearchOptIn && isSupportedModel(model) && webSearchEnabled && webSearchSelected) active.add("web_search");
 		else active.delete("web_search");
 		pi.setActiveTools([...active]);
 	}
@@ -297,35 +306,37 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("web-search", {
-		description: "Enable or disable the Codex web search tool",
-		handler: async (args, ctx) => {
-			const request = parseCommand(args);
-			if (!request || !["toggle", "on", "off", "status"].includes(request.action)) {
-				emitCommand("web-search", ctx, false, { error: "Expected on, off, status, or a JSON request." }, request?.requestId, "warning");
-				return;
-			}
-			if (request.action === "status") {
+	if (webSearchOptIn) {
+		pi.registerCommand("web-search", {
+			description: "Enable or disable the Codex web search tool",
+			handler: async (args, ctx) => {
+				const request = parseCommand(args);
+				if (!request || !["toggle", "on", "off", "status"].includes(request.action)) {
+					emitCommand("web-search", ctx, false, { error: "Expected on, off, status, or a JSON request." }, request?.requestId, "warning");
+					return;
+				}
+				if (request.action === "status") {
+					emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+					return;
+				}
+				webSearchEnabled = request.action === "on" || (request.action === "toggle" && !webSearchEnabled);
+				syncTools(ctx.model);
 				emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
-				return;
-			}
-			webSearchEnabled = request.action === "on" || (request.action === "toggle" && !webSearchEnabled);
-			syncTools(ctx.model);
-			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
-		},
-	});
+			},
+		});
 
-	pi.registerCommand("web-search-status", {
-		description: "Report web search as JSON",
-		handler: async (args, ctx) => {
-			const request = parseStatusRequest(args);
-			if (!request || request.action !== "status") {
-				emitCommand("web-search", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
-				return;
-			}
-			emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
-		},
-	});
+		pi.registerCommand("web-search-status", {
+			description: "Report web search as JSON",
+			handler: async (args, ctx) => {
+				const request = parseStatusRequest(args);
+				if (!request || request.action !== "status") {
+					emitCommand("web-search", ctx, false, { error: "Expected a request ID or a JSON status request." }, request?.requestId, "warning");
+					return;
+				}
+				emitCommand("web-search", ctx, true, { enabled: webSearchEnabled, supported: isSupportedModel(ctx.model), ...modelInfo(ctx.model) }, request.requestId);
+			},
+		});
+	}
 
 	const upstreamApplyPatchTool = createUnrestrictedApplyPatchTool();
 	pi.registerTool({
@@ -359,7 +370,7 @@ export default function piMicroGpt(pi: ExtensionAPI): void {
 			return { content: [{ type: "text", text: result.text }], details: { commands, rawOutput: boundedWebSearchDetails(result.text), results: result.response.results } };
 		},
 	};
-	pi.registerTool(webSearch);
+	if (webSearchOptIn) pi.registerTool(webSearch);
 
 	pi.on("session_start", (_event, ctx) => {
 		setLongContext(false, longContextModel);
