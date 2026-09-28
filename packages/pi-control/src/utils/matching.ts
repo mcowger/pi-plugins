@@ -49,6 +49,8 @@ const ACTION_PRIORITY: Record<Action, number> = {
 	ask: 2,
 	deny: 3,
 	log: 4,
+	// Explicit rules win same-specificity ties against the auto deferral.
+	auto: 5,
 };
 
 /** Result of matching a rule — action plus optional pattern that matched. */
@@ -131,8 +133,15 @@ export function matchRuleWithDetails(
 
 // ─── Multi-target resolution ──────────────────────────────────────────────────
 
-/** Restrictiveness order: deny > ask > log > nudge > allow */
-const RESTRICTIVENESS: Action[] = ["deny", "ask", "log", "nudge", "allow"];
+/** Restrictiveness order: deny > ask > auto > log > nudge > allow */
+const RESTRICTIVENESS: Action[] = [
+	"deny",
+	"ask",
+	"auto",
+	"log",
+	"nudge",
+	"allow",
+];
 
 /**
  * Given actions from multiple policies (one per target), return the most

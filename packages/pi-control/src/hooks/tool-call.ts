@@ -2,6 +2,7 @@ import type {
 	ExtensionContext,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { ControlsMode } from "../index.js";
 import {
@@ -34,7 +35,16 @@ import {
 	setCachedVerdict,
 	verdictRationale,
 } from "../utils/decisions.js";
-import type { EvalTrace } from "../utils/logger.js";
+import {
+	appliedAutoConfig,
+	autoCacheKey,
+	classifyAuto,
+	getCachedAutoVerdict,
+	setCachedAutoVerdict,
+	verdictRationale as autoVerdictRationale,
+} from "../utils/auto-decisions.js";
+import { buildAutoState } from "../utils/auto-state.js";
+import type { AutoSkipReason, AutoTrace, EvalTrace } from "../utils/logger.js";
 
 /**
  * Nudge messages pending injection into tool results, keyed by toolCallId.
@@ -142,6 +152,15 @@ interface EvalOutcome {
 /** Warn once per session when eval classification auth fails. */
 let decisionsAuthWarned = false;
 
+/** Warn once per session when the auto action has no decisions block to use. */
+let autoUnavailableWarned = false;
+
+/** Test hook: clear the once-per-session warnings. */
+export function resetDecisionWarnings(): void {
+	decisionsAuthWarned = false;
+	autoUnavailableWarned = false;
+}
+
 /** argv[0] label for an eval trace ("unknown" when dynamic). */
 function stageInterpreterLabel(stage: CommandStage): string {
 	const first = stage.args[0];
@@ -168,27 +187,50 @@ async function classifyEvalSources(
 ): Promise<{
 	outcomes: EvalOutcome[];
 	skipped?: "session-allow" | "approval-rule";
+	/** Stage indices whose inline eval source was actually classified. */
+	classifiedStages: Set<number>;
 }> {
 	const decisions = config.decisions;
-	if (!decisions) return { outcomes: [] };
+	if (!decisions) {
+		return { outcomes: [], classifiedStages: new Set<number>() };
+	}
 
-	const found: { source: EvalSource; stageCommand: string }[] = [];
+	const found: {
+		source: EvalSource;
+		stageCommand: string;
+		stageIndex: number;
+	}[] = [];
 	const missing: { interpreter: string; detail: string }[] = [];
-	for (const stage of stages) {
+	for (const [stageIndex, stage] of stages.entries()) {
 		const detection = detectEvalSources(stage);
 		for (const source of detection.sources) {
-			found.push({ source, stageCommand: stage.command });
+			found.push({ source, stageCommand: stage.command, stageIndex });
 		}
 		const label = stageInterpreterLabel(stage);
 		for (const detail of detection.unavailable) {
 			missing.push({ interpreter: label, detail });
 		}
 	}
-	if (found.length === 0 && missing.length === 0) return { outcomes: [] };
-	if (sessionAllowed) return { outcomes: [], skipped: "session-allow" };
-	if (approvalAllowed) return { outcomes: [], skipped: "approval-rule" };
+	if (found.length === 0 && missing.length === 0) {
+		return { outcomes: [], classifiedStages: new Set<number>() };
+	}
+	if (sessionAllowed) {
+		return {
+			outcomes: [],
+			skipped: "session-allow",
+			classifiedStages: new Set<number>(),
+		};
+	}
+	if (approvalAllowed) {
+		return {
+			outcomes: [],
+			skipped: "approval-rule",
+			classifiedStages: new Set<number>(),
+		};
+	}
 
 	const outcomes: EvalOutcome[] = [];
+	const classifiedStages = new Set<number>();
 	for (const { interpreter, detail } of missing) {
 		const action = decisions.unavailableAction;
 		outcomes.push({
@@ -198,82 +240,275 @@ async function classifyEvalSources(
 		});
 	}
 	const classified = await Promise.all(
-		found.map(async ({ source, stageCommand }): Promise<EvalOutcome> => {
-			const key = evalCacheKey(source.language, source.source);
-			const cached = getCachedVerdict(key);
-			if (cached !== undefined) {
-				return {
-					action: cached,
-					note: `cached: ${cached}`,
-					trace: { kind: "cached", key, verdict: cached },
-				};
-			}
-			const started = Date.now();
-			try {
-				const result = await classifySource(
-					{ source, stageCommand, pipeline, cwd, targets },
-					decisions,
-				);
-				setCachedVerdict(key, result.verdict);
-				return {
-					action: result.verdict,
-					note: verdictRationale(result),
-					trace: {
-						kind: "classified",
-						language: source.language,
-						interpreter: source.interpreter,
-						origin: source.origin,
-						truncated: result.request.state.truncated,
-						request: result.request,
-						response: result.response,
-						evaluation: {
-							buckets: result.buckets,
-							appliedConfig: {
-								yesThreshold: decisions.yesThreshold,
-								noThreshold: decisions.noThreshold,
-								choiceConfidence: decisions.choiceConfidence,
-								riskyMassThreshold: decisions.riskyMassThreshold,
-								backstopThreshold: decisions.backstopThreshold,
-								weights: decisions.weights,
-							},
-							stage1: result.stage1,
-							stage2: result.stage2,
-							verdict: result.verdict,
-						},
-						latencyMs: result.latencyMs,
-					},
-				};
-			} catch (error) {
-				const detail =
-					error instanceof DecisionsError ? error.detail : String(error);
-				if (
-					error instanceof DecisionsError &&
-					error.code === "auth" &&
-					!decisionsAuthWarned
-				) {
-					decisionsAuthWarned = true;
-					ctx.ui.notify(
-						`[pi-controls] eval classification auth failed: ${detail}`,
-						"warning",
-					);
+		found.map(
+			async ({ source, stageCommand, stageIndex }): Promise<EvalOutcome> => {
+				const key = evalCacheKey(source.language, source.source);
+				const cached = getCachedVerdict(key);
+				if (cached !== undefined) {
+					classifiedStages.add(stageIndex);
+					return {
+						action: cached,
+						note: `cached: ${cached}`,
+						trace: { kind: "cached", key, verdict: cached },
+					};
 				}
-				const action = decisions.errorAction;
-				return {
-					action,
-					note: detail,
-					trace: {
-						kind: "error",
-						interpreter: source.interpreter,
-						detail,
+				const started = Date.now();
+				try {
+					const result = await classifySource(
+						{ source, stageCommand, pipeline, cwd, targets },
+						decisions,
+					);
+					setCachedVerdict(key, result.verdict);
+					classifiedStages.add(stageIndex);
+					return {
+						action: result.verdict,
+						note: verdictRationale(result),
+						trace: {
+							kind: "classified",
+							language: source.language,
+							interpreter: source.interpreter,
+							origin: source.origin,
+							truncated: result.request.state.truncated,
+							request: result.request,
+							response: result.response,
+							evaluation: {
+								buckets: result.buckets,
+								appliedConfig: {
+									yesThreshold: decisions.yesThreshold,
+									noThreshold: decisions.noThreshold,
+									choiceConfidence: decisions.choiceConfidence,
+									riskyMassThreshold: decisions.riskyMassThreshold,
+									backstopThreshold: decisions.backstopThreshold,
+									weights: decisions.weights,
+								},
+								stage1: result.stage1,
+								stage2: result.stage2,
+								verdict: result.verdict,
+							},
+							latencyMs: result.latencyMs,
+						},
+					};
+				} catch (error) {
+					const detail =
+						error instanceof DecisionsError ? error.detail : String(error);
+					if (
+						error instanceof DecisionsError &&
+						error.code === "auth" &&
+						!decisionsAuthWarned
+					) {
+						decisionsAuthWarned = true;
+						ctx.ui.notify(
+							`[pi-controls] eval classification auth failed: ${detail}`,
+							"warning",
+						);
+					}
+					const action = decisions.errorAction;
+					return {
 						action,
-						latencyMs: Date.now() - started,
-					},
-				};
-			}
-		}),
+						note: detail,
+						trace: {
+							kind: "error",
+							interpreter: source.interpreter,
+							detail,
+							action,
+							latencyMs: Date.now() - started,
+						},
+					};
+				}
+			},
+		),
 	);
 	outcomes.push(...classified);
-	return { outcomes };
+	return { outcomes, classifiedStages };
+}
+
+/** Result of resolving a combined `auto` action to a concrete verdict. */
+interface AutoOutcome {
+	action: "allow" | "ask" | "deny";
+	/** Pre-labelled rationale ("auto: …") for the ask/deny message. */
+	note?: string;
+	trace?: AutoTrace;
+	skipped?: AutoSkipReason;
+}
+
+/**
+ * Resolve a tool call whose combined action is `auto` to a concrete verdict.
+ *
+ * Guards (no API call): eval already classified, session allowlist, or
+ * decisions unconfigured. A saved approval rule needs no guard here — it
+ * contributes an explicit `allow` for its target during matching, so the call
+ * only reaches `auto` when some target is not approved. Otherwise the state is
+ * assembled, answered against the session verdict cache, or classified via the
+ * Decisions API. Never throws — API failures map through
+ * `decisions.errorAction`.
+ */
+async function resolveAutoAction(args: {
+	ctx: ExtensionContext;
+	config: ControlsResolvedConfig;
+	toolName: string;
+	input: Record<string, unknown>;
+	targets: string[];
+	sessionAllowed: boolean;
+	evalClassified: boolean;
+	toolInfo?: ToolInfo;
+}): Promise<AutoOutcome> {
+	const {
+		ctx,
+		config,
+		toolName,
+		input,
+		targets,
+		sessionAllowed,
+		evalClassified,
+		toolInfo,
+	} = args;
+
+	if (evalClassified) return { action: "allow", skipped: "eval-classified" };
+	if (sessionAllowed) return { action: "allow", skipped: "session-allow" };
+
+	const decisions = config.decisions;
+	if (!decisions) {
+		if (!autoUnavailableWarned) {
+			autoUnavailableWarned = true;
+			ctx.ui.notify(
+				"[pi-controls] auto action needs a `decisions` block in config — falling back to ask",
+				"warning",
+			);
+		}
+		return {
+			action: "ask",
+			note: "auto: decisions API not configured",
+			trace: {
+				kind: "auto-unavailable",
+				detail: "decisions block not configured",
+				action: "ask",
+			},
+		};
+	}
+
+	const sessionId = ctx.sessionManager.getSessionId();
+	const key = autoCacheKey({
+		tool: toolName,
+		rawInput: input,
+		targets,
+		cwd: ctx.cwd,
+		sessionId,
+	});
+	const cached = getCachedAutoVerdict(key);
+	if (cached !== undefined) {
+		return {
+			action: cached,
+			note: `auto: cached ${cached}`,
+			trace: { kind: "auto-cached", key, verdict: cached },
+		};
+	}
+
+	// Build the (conversation-reading, input-normalizing) state only on a miss.
+	const state = buildAutoState({
+		toolName,
+		input,
+		cwd: ctx.cwd,
+		targets,
+		sessionId,
+		sessionManager: ctx.sessionManager,
+		toolInfo,
+		auto: decisions.auto,
+	});
+
+	const started = Date.now();
+	try {
+		const result = await classifyAuto({ state, sessionId }, decisions);
+		setCachedAutoVerdict(key, result.verdict);
+		return {
+			action: result.verdict,
+			note: `auto: ${autoVerdictRationale(result)}`,
+			trace: {
+				kind: "auto-classified",
+				request: result.request,
+				response: result.response,
+				evaluation: {
+					buckets: result.buckets,
+					appliedConfig: appliedAutoConfig(decisions.auto),
+					stage1: result.stage1,
+					stage2: result.stage2,
+					verdict: result.verdict,
+				},
+				latencyMs: result.latencyMs,
+			},
+		};
+	} catch (error) {
+		const detail =
+			error instanceof DecisionsError ? error.detail : String(error);
+		if (
+			error instanceof DecisionsError &&
+			error.code === "auth" &&
+			!decisionsAuthWarned
+		) {
+			decisionsAuthWarned = true;
+			ctx.ui.notify(
+				`[pi-controls] decisions auth failed: ${detail}`,
+				"warning",
+			);
+		}
+		// `deny: false` promises the engine can never deny — cap the error path too.
+		const configured = decisions.errorAction;
+		const action =
+			!decisions.auto.deny && configured === "deny" ? "ask" : configured;
+		return {
+			action,
+			note: `auto: ${detail}`,
+			trace: {
+				kind: "auto-error",
+				detail,
+				action,
+				latencyMs: Date.now() - started,
+			},
+		};
+	}
+}
+
+/** Concrete outcome of resolving a combined action. */
+interface CombinedResolution {
+	finalAction: Action;
+	autoNote?: string;
+	autoTrace?: AutoTrace;
+	autoSkipped?: AutoSkipReason;
+}
+
+/**
+ * Resolve a combined action to a concrete outcome. Non-`auto` actions pass
+ * through unchanged; `auto` is delegated to the Decisions evaluation.
+ */
+async function resolveCombinedAction(args: {
+	combinedAction: Action;
+	ctx: ExtensionContext;
+	config: ControlsResolvedConfig;
+	toolName: string;
+	input: Record<string, unknown>;
+	targets: string[];
+	sessionAllowed: boolean;
+	evalClassified: boolean;
+	toolInfo?: ToolInfo;
+}): Promise<CombinedResolution> {
+	if (args.combinedAction !== "auto") {
+		return { finalAction: args.combinedAction };
+	}
+	const outcome = await resolveAutoAction({
+		ctx: args.ctx,
+		config: args.config,
+		toolName: args.toolName,
+		input: args.input,
+		targets: args.targets,
+		sessionAllowed: args.sessionAllowed,
+		evalClassified: args.evalClassified,
+		toolInfo: args.toolInfo,
+	});
+	return {
+		finalAction: outcome.action,
+		autoNote: outcome.note,
+		autoTrace: outcome.trace,
+		autoSkipped: outcome.skipped,
+	};
 }
 
 function getTargetPaths(event: ToolCallEvent, cwd: string): string[] {
@@ -566,9 +801,9 @@ function notifyDecision(
 			matchedPattern,
 			pathLabel,
 		);
-		const evalSuffix = decisionNote ? ` — eval: ${decisionNote}` : "";
+		const decisionSuffix = decisionNote ? ` — ${decisionNote}` : "";
 		ctx.ui.notify(
-			`pi-controls: ${label}${policy}${cmd}${context}${evalSuffix}`,
+			`pi-controls: ${label}${policy}${cmd}${context}${decisionSuffix}`,
 			type,
 		);
 	}
@@ -621,8 +856,8 @@ async function executeAction(
 			const summaryText = summary ? ` (${summary})` : "";
 			const context = buildContextSuffix(deniedPaths, matchedPattern);
 			const detail = context.length > 0 ? context : "";
-			const evalSuffix = decisionNote ? ` [eval: ${decisionNote}]` : "";
-			const title = `[pi-controls] Allow ${toolName}${summaryText}?${detail}${evalSuffix}`;
+			const decisionSuffix = decisionNote ? ` [${decisionNote}]` : "";
+			const title = `[pi-controls] Allow ${toolName}${summaryText}?${detail}${decisionSuffix}`;
 			const choices = ["Allow", "Allow for session"];
 			if (approvalPersistence) {
 				choices.push("Allow for Project", "Allow Globally");
@@ -700,14 +935,14 @@ async function executeAction(
 				matchedPattern,
 				verdictPathLabel(basis),
 			);
-			const evalSuffix = decisionNote ? ` [eval: ${decisionNote}]` : "";
+			const decisionSuffix = decisionNote ? ` [${decisionNote}]` : "";
 			const pathNote = pathRestrictionNote(basis, toolName, deniedPaths);
 			const nudgeNote = escalatedFromNudge
 				? ` You were repeatedly warned: "${escalatedFromNudge}". You MUST switch approach now.`
 				: "";
 			return {
 				block: true,
-				reason: `[pi-controls] Access denied by policy: ${toolName}${cmdPart}${context}${evalSuffix}.${pathNote}${nudgeNote}`,
+				reason: `[pi-controls] Access denied by policy: ${toolName}${cmdPart}${context}${decisionSuffix}.${pathNote}${nudgeNote}`,
 			};
 		}
 	}
@@ -782,6 +1017,7 @@ export async function handleToolCall(
 	ctx: ExtensionContext,
 	config: ControlsResolvedConfig,
 	mode: ControlsMode = "enforce",
+	toolInfo?: (name: string) => ToolInfo | undefined,
 ): Promise<ToolCallEventResult | undefined> {
 	const cwd = ctx.cwd;
 
@@ -807,13 +1043,14 @@ export async function handleToolCall(
 			ruleKey?: string;
 			matchedRule: boolean;
 			matchedTool?: string;
+			stageIndex: number;
 		}[] = [];
 		const targets: string[] = [];
 		const policyNames = new Set<string>();
 		let policyName: string | null = null;
 		let approvalAllowed = false;
 
-		for (const stage of stages) {
+		for (const [stageIndex, stage] of stages.entries()) {
 			const stageTargets = [
 				...new Set(
 					[...stage.redirectFiles, ...stage.pathArgs].map((path) =>
@@ -846,6 +1083,7 @@ export async function handleToolCall(
 						ruleKey: nudgeKey("bash", result.matchedPattern),
 						matchedRule: result.matchedRule,
 						matchedTool: result.matchedTool,
+						stageIndex,
 					});
 				}
 			}
@@ -854,6 +1092,8 @@ export async function handleToolCall(
 		const uniqueTargets = [...new Set(targets)];
 		const analyzedPathBlock = checkProtectedPaths(uniqueTargets, config);
 		if (analyzedPathBlock) return analyzedPathBlock;
+
+		const bashSessionAllowed = sessionAllowsBashMatches(cmd, uniqueTargets);
 
 		// Eval classification (Decisions API): upgrade-only backstop for
 		// inline evals. Skipped entirely when unconfigured or approved.
@@ -865,7 +1105,7 @@ export async function handleToolCall(
 			uniqueTargets,
 			config,
 			approvalAllowed,
-			sessionAllowsBashMatches(cmd, uniqueTargets),
+			bashSessionAllowed,
 		);
 		const evalActions = evalResult.outcomes.map((outcome) => outcome.action);
 		const evalTraces = evalResult.outcomes.map((outcome) => outcome.trace);
@@ -891,17 +1131,46 @@ export async function handleToolCall(
 			...matchResults.map((result) => result.action),
 			...evalActions,
 		];
-		const finalAction = mostRestrictive(actions);
+		const combinedAction = mostRestrictive(actions);
+
+		// An eval classification only excuses the stages it actually judged. If
+		// the `auto` verdict came from any non-eval stage, still run auto for the
+		// call — otherwise `python -c '…'; rm -rf …` is silently allowed.
+		const autoStages = new Set(
+			matchResults
+				.filter((result) => result.action === "auto")
+				.map((result) => result.stageIndex),
+		);
+		const evalClassified =
+			autoStages.size > 0 &&
+			[...autoStages].every((index) => evalResult.classifiedStages.has(index));
+
+		const { finalAction, autoNote, autoTrace, autoSkipped } =
+			await resolveCombinedAction({
+				combinedAction,
+				ctx,
+				config,
+				toolName: "bash",
+				input: event.input as Record<string, unknown>,
+				targets: uniqueTargets,
+				sessionAllowed: bashSessionAllowed,
+				evalClassified,
+				toolInfo: toolInfo?.("bash"),
+			});
+
+		// Cite the rule/pattern that produced the combined action; when `auto` won,
+		// that is the `auto` rule even though the resolved verdict is concrete.
 		const matchedPattern = matchResults
 			.filter(
 				(result) =>
-					result.action === finalAction && result.matchedPattern !== undefined,
+					result.action === combinedAction &&
+					result.matchedPattern !== undefined,
 			)
 			.map((result) => result.matchedPattern!)
 			.sort((a, b) => b.length - a.length)[0];
 		const nudgeMatch = matchResults.find(
 			(result) =>
-				result.action === finalAction && result.nudgeMessage !== undefined,
+				result.action === combinedAction && result.nudgeMessage !== undefined,
 		);
 		const nudgeMessage = nudgeMatch?.nudgeMessage;
 		const bashNudgeKey =
@@ -920,14 +1189,17 @@ export async function handleToolCall(
 		// Cite the eval rationale when an eval verdict is binding or tied
 		// with the location verdict (never for silent allows).
 		const evalBinding =
-			evalActions.length > 0 && mostRestrictive(evalActions) === finalAction;
-		const evalNote =
+			evalActions.length > 0 && mostRestrictive(evalActions) === combinedAction;
+		const evalDetail =
 			evalBinding && finalAction !== "allow"
 				? evalResult.outcomes
 						.filter((outcome) => outcome.action === finalAction)
 						.map((outcome) => outcome.note)
-						.join("; ") || undefined
-				: undefined;
+						.join("; ")
+				: "";
+		const evalNote = evalDetail ? `eval: ${evalDetail}` : undefined;
+		const decisionNote =
+			[evalNote, autoNote].filter(Boolean).join("; ") || undefined;
 
 		await logDecision({
 			ts: new Date().toISOString(),
@@ -939,6 +1211,8 @@ export async function handleToolCall(
 			action: finalAction,
 			evals: evalTraces.length > 0 ? evalTraces : undefined,
 			evalSkipped: evalResult.skipped,
+			auto: autoTrace,
+			autoSkipped,
 		});
 		notifyDecision(
 			ctx,
@@ -950,7 +1224,7 @@ export async function handleToolCall(
 			deniedTargets,
 			matchedPattern,
 			nudgeMessage,
-			evalNote,
+			decisionNote,
 			verdictBasis,
 		);
 		if (mode === "inform") return undefined;
@@ -991,7 +1265,7 @@ export async function handleToolCall(
 			bashEscalatedFromNudge,
 			summary,
 			approvalPersistence,
-			evalNote,
+			decisionNote,
 			verdictBasis,
 		);
 	}
@@ -1039,9 +1313,25 @@ export async function handleToolCall(
 	}
 
 	const actions = matchResults.map((r) => r.action);
-	const finalAction = mostRestrictive(actions);
+	const combinedAction = mostRestrictive(actions);
+
+	const { finalAction, autoNote, autoTrace, autoSkipped } =
+		await resolveCombinedAction({
+			combinedAction,
+			ctx,
+			config,
+			toolName: event.toolName,
+			input: event.input as Record<string, unknown>,
+			targets,
+			sessionAllowed: sessionAllows.has(
+				sessionAllowKey(event.toolName, null, targets),
+			),
+			evalClassified: false,
+			toolInfo: toolInfo?.(event.toolName),
+		});
+
 	const nudgeMatch = matchResults.find(
-		(r) => r.action === finalAction && r.nudgeMessage !== undefined,
+		(r) => r.action === combinedAction && r.nudgeMessage !== undefined,
 	);
 	const nudgeMessage = nudgeMatch?.nudgeMessage;
 	const toolNudgeKey = nudgeMatch?.ruleKey ?? nudgeKey(event.toolName);
@@ -1057,6 +1347,8 @@ export async function handleToolCall(
 		targets,
 		policyName,
 		action: finalAction,
+		auto: autoTrace,
+		autoSkipped,
 	});
 	notifyDecision(
 		ctx,
@@ -1068,7 +1360,7 @@ export async function handleToolCall(
 		targets,
 		undefined,
 		nudgeMessage,
-		undefined,
+		autoNote,
 		verdictBasis,
 	);
 	if (mode === "inform") return undefined;
@@ -1103,7 +1395,7 @@ export async function handleToolCall(
 		escalatedFromNudge,
 		summary,
 		approvalPersistence,
-		undefined,
+		autoNote,
 		verdictBasis,
 	);
 }

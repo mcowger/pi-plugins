@@ -18,6 +18,7 @@ When the agent tries to run a bash command, read a file, write to a path, or cal
   - [Actions](#actions)
   - [Agent Timeout](#agent-timeout)
   - [Nudge Timeout](#nudge-timeout)
+  - [Auto Fallthrough](#auto-fallthrough)
   - [Locations](#locations)
 - [Subagent Ask Forwarding](#subagent-ask-forwarding)
 - [Rule Matching and Specificity](#rule-matching-and-specificity)
@@ -236,8 +237,9 @@ Each rule has:
 | `log` | Tool call proceeds, but a notification is shown in the pi UI. Useful for auditing. |
 | `ask` | Execution pauses and pi asks for confirmation. Approved → proceeds. Denied → blocked, and the LLM receives a reason message. |
 | `deny` | Tool call is blocked immediately. The LLM receives a reason message. |
+| `auto` | Defer to the Decisions API when this action wins: the model answers capability/blast-radius questions and deterministic rules map them to `allow` / `ask` / `deny`. See [Auto Fallthrough](#auto-fallthrough). |
 
-`defaultAction` follows the same behaviors and is used when no rule in the policy matches the current tool call. `"nudge"` is not valid as a `defaultAction` — it requires a `message` field which only makes sense on explicit rules.
+`defaultAction` follows the same behaviors and is used when no rule in the policy matches the current tool call. `"nudge"` is not valid as a `defaultAction` — it requires a `message` field which only makes sense on explicit rules. `"auto"` is valid in both places.
 
 ### Agent Timeout
 
@@ -297,6 +299,46 @@ The **nudge timeout** is a per-rule sliding-window circuit breaker. When the age
 | 4th `read` | nudge — counter was reset, cycle starts over |
 
 `nudgeTimeout` is optional. If absent or `null`, nudges never escalate.
+
+---
+
+### Auto Fallthrough
+
+The `auto` action is a final fallthrough that reasons about a tool call instead of silently allowing it. When the winning action for a call is `auto`, pi-controls assembles the call's context and sends it to the Decisions API with a universal capability/blast-radius question set. Deterministic rules map the answers to a terminal `allow` / `ask` / `deny`. It is designed for permissive defaults (`"defaultAction": "auto"`) that should catch risky calls no pattern rule anticipated.
+
+```jsonc
+{
+  "policies": {
+    "cwd": {
+      "defaultAction": "auto",   // explicit rules below still win
+      "rules": [
+        { "action": "ask", "tool": "bash", "pattern": "git push*" }
+      ]
+    }
+  },
+  "decisions": {
+    "url": "https://openrouter.ai/api/alpha/decisions",
+    "tokenEnv": "OPENROUTER_API_KEY",
+    "auto": { "deny": true }
+  }
+}
+```
+
+**What is sent.** The tool name, a normalized form of the input (bash command; write size plus a head/tail preview; edit changed regions; grep/find/ls fields; custom-tool JSON), the working directory, resolved targets, the tool description and schema from `pi.getAllTools()`, the current user prompt, and ~6 recent conversation turns (one-line summaries only). No matched policy or rules, and no redaction.
+
+**Data egress.** All of the above leaves your machine and is sent to the configured `decisions.url` (OpenRouter by default). There is no redaction, so secrets in a prompt, command, or file content are transmitted and are also written unredacted to `pi-controls.log`. Point `url` at an endpoint you trust, or leave `auto` disabled for sensitive repositories.
+
+**Questions.** Seven, answered in a single round trip: `action_class`, `scope`, and `data_sensitivity` (choice), plus `destructive`, `network`, `concealed`, and `inference_call` (boolean). The model is eyes; code decides.
+
+**Verdicts.** A `deny` requires one of four curated shapes: `destructive + out-of-scope`, `destructive + concealed`, `sensitive-data + network`, or `concealed + capability`. Everything else risky asks. A weighted-score backstop catches accumulated weak signals and can only ever ask, never deny. Set `"deny": false` to cap every auto verdict at `ask`.
+
+**Combination.** `auto` participates in the usual ranks: within a policy it loses same-specificity ties to explicit rules, and across targets it sits between `ask` and `log`. Explicit `deny`/`ask` rules therefore always win — `auto` is only ever the fallthrough.
+
+**When auto does not call the API.** `ignore` mode, a session allowlist covering the call, a missing `decisions` block (falls back to `ask` with a one-time warning), or a command where every `auto`-producing stage was itself classified by [Eval Classification](#eval-classification) (the eval classifier is the specialist for those stages). A command that mixes an eval stage with a non-eval stage is still evaluated for the non-eval part. A saved approval rule needs no special case: it contributes an explicit `allow` for its target, so auto only runs when some target is still unapproved.
+
+**Cost.** One request per unmatched call; repeat calls with the same tool/input/targets/cwd are served from a session cache, cleared on config reload. There is no per-session budget cap. Set a credit limit on the API key, as with eval classification.
+
+**Logging.** Every evaluation appends an `auto` trace to `pi-controls.log`: the exact state and questions sent, raw answers plus token/cost usage, applied thresholds and weights, the rule or score breakdown, and the final verdict.
 
 ---
 
@@ -435,7 +477,7 @@ Running `git status`:
 - Only `"git *"` matches (score 4).
 - Result → **allow**.
 
-**Tiebreaker:** when two rules have the same specificity score, the least-disruptive action wins: `allow > nudge > ask > deny > log`. You never accidentally block something more than the rules intend.
+**Tiebreaker:** when two rules have the same specificity score, the least-disruptive action wins: `allow > nudge > ask > deny > log > auto`. You never accidentally block something more than the rules intend. `auto` sorts last here on purpose: an explicit rule always wins a same-specificity tie, and `auto` only takes effect when nothing more specific (or equally specific) matched.
 
 ```json
 { "action": "allow", "tool": "bash", "pattern": "git *" },
@@ -457,7 +499,9 @@ Both score 5. Tiebreaker: **nudge** wins (less disruptive than deny).
 
 When a bash command touches files in multiple locations — through redirect targets — each location's policy is evaluated independently. The **most restrictive** action across all of them wins.
 
-Restrictiveness order: `deny > ask > log > nudge > allow`
+Restrictiveness order: `deny > ask > auto > log > nudge > allow`
+
+`auto` sits between `ask` and `log`, so an explicit `deny` or `ask` from any target beats a model verdict, while `auto` beats a bare `allow`/`log`/`nudge`. A call whose combined action is `auto` is evaluated **once**, against every target at once.
 
 **Example config:**
 
@@ -548,13 +592,15 @@ See [`examples/sample.jsonc`](examples/sample.jsonc) for a complete working exam
 
 ## Eval Classification
 
-Inline code evals — `python -c`, `node -e`, `bun -e`, `deno eval`, `tsx -e`, `bash -c`, and heredoc-fed interpreters — are invisible to path- and pattern-based policy. When the optional top-level `decisions` block is configured, each eval's source is sent to the OpenRouter Decisions API (`POST {url}`, plain `fetch`, no SDK), which answers capability/scope questions about the code. Absent the block, the feature is fully off: bash enforcement is location policy only, with zero network calls.
+Inline code evals — `python -c`, `node -e`, `bun -e`, `deno eval`, `tsx -e`, `bash -c`, and heredoc-fed interpreters — are invisible to path- and pattern-based policy. When the optional top-level `decisions` block is configured, each eval's source is sent to the configured Decisions endpoint (`POST {url}` via the official `@typesafe-ai/sdk` client), which answers capability/scope questions about the code. Absent the block, the feature is fully off: bash enforcement is location policy only, with zero network calls.
 
 **Scope.** Only bash stages that execute inline code through a covered interpreter are classified. Ordinary shell commands, script-file and module runs (`python script.py`, `python -m pytest`), non-bash tools, and commands with an explicit session or saved approval never touch the API. Eval-shaped invocations with no recoverable source (`python -c "$CODE"`, `curl … | python3`) make no API call and fall back to `unavailableAction`.
 
 **Verdict engine.** The model answers seven questions — `destructive`, `network`, `exec`, `obfuscated`, and pipeline-wide `inference_call` (boolean), plus `write_scope` and `read_scope` (choice questions scoped against the cwd, e.g. a write inside the project vs. one to `/etc`). A deterministic rule table maps the answers to `allow` / `ask` / `deny`: destructive, exfil-shaped (`sensitive` read + network), and concealed-capability (obfuscated + network/exec) combinations deny; out-of-scope writes, sensitive reads, and uncertainty ask; routine in-scope capabilities (including network- or subprocess-use alone) allow. A weighted-score backstop catches accumulated weak signals when no rule fires — it can only ever ask, never deny. Full question text, rule IDs, and weights live in [`docs/plans/2026-09-22-decisions-eval-classification.md`](docs/plans/2026-09-22-decisions-eval-classification.md).
 
 **Combination.** The eval verdict combines upgrade-only with the location verdict via the usual most-restrictive rule: the model can escalate an `allow` to `ask`/`deny`, but can never downgrade a location `ask`/`deny`.
+
+**Interaction with `auto`.** When an inline eval source is classified, the [`auto`](#auto-fallthrough) fallthrough is skipped for that call — the eval classifier is the specialist for inline code, which also avoids a second billed request.
 
 **Auth.** The bearer token is read from the env var named by `tokenEnv` (default `OPENROUTER_API_KEY`); the token itself never appears in config. Set a credit limit on the key — a runaway agent with an unlimited key can spend the whole balance.
 
@@ -993,7 +1039,7 @@ Pair this with a strict `defaultAction: "deny"` policy to maximize the benefit: 
 | `defaultPolicy` | `string \| null` | No | Policy to apply when no location matches. `null` or absent = fail-open. |
 | `agentTimeout` | `AgentTimeout \| null` | No | Circuit breaker: escalate `deny` → `ask` when the deny rate exceeds the threshold. `null` or absent = disabled. |
 | `nudgeTimeout` | `NudgeTimeout \| null` | No | Circuit breaker: escalate `nudge` → `deny` when the same nudge rule is ignored too many times. `null` or absent = disabled. |
-| `decisions` | `DecisionsConfig \| null` | No | Eval classification via the Decisions API (see [Eval Classification](#eval-classification)). `null` or absent = disabled. |
+| `decisions` | `DecisionsConfig \| null` | No | Decisions API configuration for [Eval Classification](#eval-classification) and the [Auto Fallthrough](#auto-fallthrough) action. `null` or absent = both disabled. |
 
 ### AgentTimeout fields
 
@@ -1026,19 +1072,38 @@ Pair this with a strict `defaultAction: "deny"` policy to maximize the benefit: 
 | `riskyMassThreshold` | `number` | No | Below confidence, risky-label mass at/above this → uncertain (ask). Defaults to `0.35`. |
 | `backstopThreshold` | `number` | No | Weighted score at/above this → ask. Defaults to `40`. |
 | `weights` | `Record<string, number>` | No | Per-signal weights (`destructive`, `obfuscated`, `network`, `exec`, `writeSensitive`, `writeOutside`, `writeUnknown`, `readSensitive`, `readUnknown`). Deep-merged, so single weights can be overridden. |
+| `auto` | `AutoConfig` | No | Tuning for the [Auto Fallthrough](#auto-fallthrough) action. Deep-merged over code defaults, so a project can override a single field or weight. |
+
+### Auto fields
+
+All fields are optional and live under `decisions.auto`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deny` | `boolean` | When `false`, the engine can never deny — verdicts cap at `ask`. Defaults to `true`. |
+| `yesThreshold` | `number` | Boolean probability at/above this → yes. Defaults to `0.7`. |
+| `noThreshold` | `number` | Boolean probability at/below this → no (between → uncertain). Defaults to `0.3`. |
+| `choiceConfidence` | `number` | Choice top-label probability needed for a confident label. Defaults to `0.6`. |
+| `riskyMassThreshold` | `number` | Below confidence, risky-label mass at/above this → uncertain. Defaults to `0.35`. |
+| `backstopThreshold` | `number` | Weighted score at/above this → ask. Defaults to `40`. |
+| `maxInputBytes` | `number` | Per normalized input field byte cap. Defaults to `16384`. |
+| `maxConversationTurns` | `number` | How many trailing conversation entries to send as grounding. Defaults to `6`. |
+| `maxConversationBytes` | `number` | Total byte cap over the conversation slice and the user prompt. Defaults to `8192`. |
+| `weights` | `Record<string, number>` | Backstop weights (`destructive`, `concealed`, `network`, `inferenceCall`, `scopeRisky`, `sensitiveData`). Deep-merged. |
+| `questions` | `Record<string, { instructions?, criteria? }>` | Per-question overrides merged over the built-in question set. |
 
 ### Policy fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `defaultAction` | `"allow" \| "ask" \| "deny" \| "log"` | Yes | Action when no rule matches. |
+| `defaultAction` | `"allow" \| "ask" \| "deny" \| "log" \| "auto"` | Yes | Action when no rule matches. |
 | `rules` | `Rule[]` | Yes | Ordered list of rules (order does not affect matching — specificity does). |
 
 ### Rule fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `action` | `"allow" \| "nudge" \| "ask" \| "deny" \| "log"` | Yes | What to do when this rule matches. |
+| `action` | `"allow" \| "nudge" \| "ask" \| "deny" \| "log" \| "auto"` | Yes | What to do when this rule matches. |
 | `tool` | `string` | Yes | Tool name or glob. Wildcards: `*` (any chars), `?` (one char). |
 | `pattern` | `string` | bash only | Glob matched against the full command string. Only used when `tool` is `"bash"`. |
 | `message` | `string` | nudge only | Reminder text prepended to the tool result (so the LLM sees it first) and shown in the pi UI. Required when `action` is `"nudge"`. |

@@ -31,6 +31,7 @@ import {
 	denyTracker,
 	nudgeTrackers,
 	nudgeKey,
+	resetDecisionWarnings,
 } from "../../src/hooks/tool-call.js";
 import type {
 	ControlsConfig,
@@ -38,6 +39,7 @@ import type {
 } from "../../src/config.js";
 import { resolveDecisions } from "../../src/config.js";
 import { clearEvalCache } from "../../src/utils/decisions.js";
+import { clearAutoCache } from "../../src/utils/auto-decisions.js";
 import type {
 	BashToolCallEvent,
 	ExtensionContext,
@@ -82,6 +84,10 @@ function makeCtx(cwd: string): ExtensionContext {
 				fg: (_color: string, text: string) => text,
 				bold: (text: string) => text,
 			},
+		},
+		sessionManager: {
+			getSessionId: () => "test-session",
+			getBranch: () => [],
 		},
 	} as any;
 }
@@ -1490,5 +1496,368 @@ describe("deny reason selects the sentence from the deciding rule", () => {
 		expect(r2?.reason).toContain('restriction is on the tool "read"');
 		expect(r2?.reason).toContain("another tool can still reach it");
 		expect(r2?.reason).not.toContain("restriction is on the PATH");
+	});
+});
+describe("auto action via Decisions API", () => {
+	const realFetch = globalThis.fetch;
+	let fetchCalls = 0;
+
+	const autoConfig: ControlsResolvedConfig = {
+		policies: {
+			autoPolicy: { defaultAction: "auto", rules: [] },
+		},
+		locations: { "/tmp": "autoPolicy" },
+		defaultPolicy: null,
+		cycleKey: "ctrl+shift+m",
+		agentTimeout: null,
+		nudgeTimeout: null,
+		pathProtection: null,
+		decisions: resolveDecisions({
+			tokenEnv: "PICONTROLS_TEST_TOKEN",
+			url: "https://example.invalid/decisions",
+		})!,
+	};
+
+	function autoAnswers(overrides: Record<string, unknown> = {}) {
+		return {
+			action_class: {
+				type: "choice",
+				choice: "local_read",
+				confidence: 0.95,
+				probabilities: { local_read: 0.95, none: 0.05 },
+			},
+			scope: {
+				type: "choice",
+				choice: "within",
+				confidence: 0.95,
+				probabilities: { within: 0.95, none: 0.05 },
+			},
+			data_sensitivity: {
+				type: "choice",
+				choice: "ordinary",
+				confidence: 0.95,
+				probabilities: { ordinary: 0.95, none: 0.05 },
+			},
+			destructive: { type: "noul", noul: 0.01 },
+			network: { type: "noul", noul: 0.01 },
+			concealed: { type: "noul", noul: 0.01 },
+			inference_call: { type: "noul", noul: 0.01 },
+			...overrides,
+		};
+	}
+
+	function stubFetch(impl: () => Promise<Response>): void {
+		globalThis.fetch = (async () => {
+			fetchCalls++;
+			return impl();
+		}) as unknown as typeof fetch;
+	}
+
+	function stubOk(answers: Record<string, unknown>): void {
+		stubFetch(
+			async () =>
+				new Response(
+					JSON.stringify({
+						id: "gen-test",
+						model: "test",
+						provider: "Test",
+						usage: { input_tokens: 10, output_tokens: 5 },
+						answers,
+					}),
+					{ status: 200 },
+				),
+		);
+	}
+
+	function evalQuestionAnswers(overrides: Record<string, unknown> = {}) {
+		return {
+			destructive: { type: "noul", noul: 0.01 },
+			network: { type: "noul", noul: 0.01 },
+			exec: { type: "noul", noul: 0.01 },
+			inference_call: { type: "noul", noul: 0.01 },
+			obfuscated: { type: "noul", noul: 0.01 },
+			write_scope: {
+				type: "choice",
+				choice: "within",
+				confidence: 0.95,
+				probabilities: { within: 0.95, none: 0.05 },
+			},
+			read_scope: {
+				type: "choice",
+				choice: "ordinary",
+				confidence: 0.95,
+				probabilities: { ordinary: 0.95, none: 0.05 },
+			},
+			...overrides,
+		};
+	}
+
+	/** Route eval vs auto answers by the question set in the request. */
+	function stubRouted(
+		auto: Record<string, unknown>,
+		evalAnswers: Record<string, unknown>,
+	): void {
+		globalThis.fetch = (async (_url: string, init: RequestInit) => {
+			fetchCalls++;
+			const body = JSON.parse(String(init.body)) as {
+				questions?: Record<string, unknown>;
+			};
+			const isEval = "write_scope" in (body.questions ?? {});
+			return new Response(
+				JSON.stringify({
+					id: "gen-test",
+					model: "test",
+					provider: "Test",
+					usage: { input_tokens: 10, output_tokens: 5 },
+					answers: isEval ? evalAnswers : auto,
+				}),
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
+	}
+
+	function lsEvent(id = "auto-id") {
+		return toolEvent("ls", id, { path: "/tmp" });
+	}
+
+	beforeEach(() => {
+		fetchCalls = 0;
+		sessionAllows.clear();
+		clearAutoCache();
+		resetDecisionWarnings();
+		process.env.PICONTROLS_TEST_TOKEN = "test-token";
+	});
+
+	afterEach(() => {
+		globalThis.fetch = realFetch;
+		delete process.env.PICONTROLS_TEST_TOKEN;
+		sessionAllows.clear();
+		clearAutoCache();
+	});
+
+	it("allows a benign call and resolves auto to allow", async () => {
+		stubOk(autoAnswers());
+		const ctx = makeCtx("/tmp");
+		const result = await handleToolCall(lsEvent(), ctx, autoConfig);
+		expect(result).toBeUndefined();
+		expect(fetchCalls).toBe(1);
+		expect((ctx.ui.select as ReturnType<typeof mock>).mock.calls.length).toBe(
+			0,
+		);
+	});
+
+	it("resolves auto for bash calls too", async () => {
+		stubOk(autoAnswers());
+		const result = await handleToolCall(
+			bashEvent("ls /tmp", "auto-bash"),
+			makeCtx("/tmp"),
+			autoConfig,
+		);
+		expect(result).toBeUndefined();
+		expect(fetchCalls).toBe(1);
+	});
+
+	it("denies a destructive out-of-scope call with the rule rationale", async () => {
+		stubOk(
+			autoAnswers({
+				destructive: { type: "noul", noul: 0.95 },
+				scope: {
+					type: "choice",
+					choice: "outside",
+					confidence: 0.9,
+					probabilities: { outside: 0.9, within: 0.1 },
+				},
+			}),
+		);
+		const result = await handleToolCall(
+			lsEvent("auto-deny"),
+			makeCtx("/tmp"),
+			autoConfig,
+		);
+		expect(result).toEqual({
+			block: true,
+			reason: expect.stringContaining("destructive-out-of-scope"),
+		});
+	});
+
+	it("asks (and cites the rule) on a sensitive read", async () => {
+		stubOk(
+			autoAnswers({
+				data_sensitivity: {
+					type: "choice",
+					choice: "sensitive",
+					confidence: 0.9,
+					probabilities: { sensitive: 0.9, ordinary: 0.1 },
+				},
+			}),
+		);
+		const ctx = makeCtx("/tmp");
+		const result = await handleToolCall(lsEvent("auto-ask"), ctx, autoConfig);
+		expect(result).toBeUndefined();
+		const selectMock = ctx.ui.select as ReturnType<typeof mock>;
+		expect(selectMock.mock.calls.length).toBe(1);
+		expect(String(selectMock.mock.calls[0][0])).toContain("sensitive-read");
+	});
+
+	it("caches repeat verdicts within the session", async () => {
+		stubOk(autoAnswers());
+		await handleToolCall(lsEvent("auto-cache-1"), makeCtx("/tmp"), autoConfig);
+		await handleToolCall(lsEvent("auto-cache-2"), makeCtx("/tmp"), autoConfig);
+		expect(fetchCalls).toBe(1);
+	});
+
+	it("honours a saved session allow without calling the API", async () => {
+		stubOk(autoAnswers());
+		sessionAllows.add(sessionAllowKey("ls", null, ["/tmp"]));
+		const ctx = makeCtx("/tmp");
+		const result = await handleToolCall(
+			lsEvent("auto-session"),
+			ctx,
+			autoConfig,
+		);
+		expect(result).toBeUndefined();
+		expect(fetchCalls).toBe(0);
+	});
+
+	it("falls back to ask when decisions is not configured", async () => {
+		stubOk(autoAnswers());
+		const unconfigured: ControlsResolvedConfig = {
+			...autoConfig,
+			decisions: null,
+		};
+		const ctx = makeCtx("/tmp");
+		const result = await handleToolCall(
+			lsEvent("auto-unconfigured"),
+			ctx,
+			unconfigured,
+		);
+		expect(result).toBeUndefined(); // select stub returns Allow
+		expect(fetchCalls).toBe(0);
+		expect((ctx.ui.select as ReturnType<typeof mock>).mock.calls.length).toBe(
+			1,
+		);
+		expect(
+			(ctx.ui.notify as ReturnType<typeof mock>).mock.calls.some((call) =>
+				String(call[0]).includes("decisions"),
+			),
+		).toBe(true);
+	});
+
+	it("does not call the API when an explicit rule wins", async () => {
+		stubOk(autoAnswers());
+		const explicit: ControlsResolvedConfig = {
+			...autoConfig,
+			policies: {
+				autoPolicy: {
+					defaultAction: "auto",
+					rules: [{ action: "deny", tool: "ls" }],
+				},
+			},
+		};
+		const result = await handleToolCall(
+			lsEvent("auto-explicit"),
+			makeCtx("/tmp"),
+			explicit,
+		);
+		expect(result).toEqual({
+			block: true,
+			reason: expect.stringContaining("Access denied"),
+		});
+		expect(fetchCalls).toBe(0);
+	});
+
+	it("lets a saved approval win without calling the API", async () => {
+		stubOk(autoAnswers());
+		const approved: ControlsResolvedConfig = {
+			...autoConfig,
+			approvalRules: [{ action: "allow", tool: "ls", policy: "autoPolicy" }],
+		};
+		const result = await handleToolCall(
+			lsEvent("auto-approved"),
+			makeCtx("/tmp"),
+			approved,
+		);
+		expect(result).toBeUndefined();
+		expect(fetchCalls).toBe(0);
+	});
+
+	it("still evaluates auto when only some bash stages are approved", async () => {
+		stubOk(autoAnswers());
+		const mixed: ControlsResolvedConfig = {
+			...autoConfig,
+			locations: { "/tmp": "autoPolicy", "/var": "autoPolicy" },
+			approvalRules: [
+				{
+					action: "allow",
+					tool: "bash",
+					pattern: "ls /tmp*",
+					policy: "autoPolicy",
+				},
+			],
+		};
+		const result = await handleToolCall(
+			bashEvent("ls /tmp && ls /var", "auto-mixed"),
+			makeCtx("/tmp"),
+			mixed,
+		);
+		expect(result).toBeUndefined();
+		expect(fetchCalls).toBe(1);
+	});
+
+	it("still evaluates auto when only an unrelated stage was eval-classified", async () => {
+		stubRouted(autoAnswers(), evalQuestionAnswers());
+		const result = await handleToolCall(
+			bashEvent('python3 -c "print(1)"; ls /tmp', "auto-mixed-eval"),
+			makeCtx("/tmp"),
+			autoConfig,
+		);
+		expect(result).toBeUndefined();
+		// One request for the eval stage, one for the non-eval auto stage.
+		expect(fetchCalls).toBe(2);
+	});
+
+	it("does not reuse a cached verdict for truncated-but-different commands", async () => {
+		stubOk(autoAnswers());
+		const truncated: ControlsResolvedConfig = {
+			...autoConfig,
+			decisions: resolveDecisions({
+				tokenEnv: "PICONTROLS_TEST_TOKEN",
+				url: "https://example.invalid/decisions",
+				auto: { maxInputBytes: 10 },
+			})!,
+		};
+		await handleToolCall(
+			bashEvent("echo AAAAAAAAAAA", "trunc-1"),
+			makeCtx("/tmp"),
+			truncated,
+		);
+		await handleToolCall(
+			bashEvent("echo AAAAAAAAAAB", "trunc-2"),
+			makeCtx("/tmp"),
+			truncated,
+		);
+		expect(fetchCalls).toBe(2);
+	});
+
+	it("caps an errorAction deny at ask when deny is disabled", async () => {
+		globalThis.fetch = (async () => {
+			fetchCalls++;
+			throw new Error("boom");
+		}) as unknown as typeof fetch;
+		const capped: ControlsResolvedConfig = {
+			...autoConfig,
+			decisions: resolveDecisions({
+				tokenEnv: "PICONTROLS_TEST_TOKEN",
+				url: "https://example.invalid/decisions",
+				errorAction: "deny",
+				auto: { deny: false },
+			})!,
+		};
+		const ctx = makeCtx("/tmp");
+		const result = await handleToolCall(lsEvent("auto-err-cap"), ctx, capped);
+		expect(result).toBeUndefined(); // select stub returned Allow
+		expect((ctx.ui.select as ReturnType<typeof mock>).mock.calls.length).toBe(
+			1,
+		);
 	});
 });

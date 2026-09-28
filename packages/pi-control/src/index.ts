@@ -14,6 +14,8 @@ import {
 	getSubagentSessionRegistry,
 	subscribeSubagentLifecycle,
 } from "./utils/subagent.js";
+import { clearPromptStore, rememberUserPrompt } from "./utils/auto-state.js";
+import { clearAutoCache } from "./utils/auto-decisions.js";
 
 export type ControlsMode = "enforce" | "ignore" | "inform";
 
@@ -43,6 +45,9 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		pi.events,
 		getSubagentSessionRegistry(),
 	);
+	/** Best-effort tool metadata (description + schema) for auto context. */
+	const toolInfo = (name: string) =>
+		pi.getAllTools().find((tool) => tool.name === name);
 
 	function setWidgetForMode(ctx: {
 		ui: { setWidget: (id: string, lines: string[]) => void };
@@ -130,6 +135,11 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 			logStartup(`bash-parser warning: ${msg}`);
 		});
 
+		// Config may have changed; cached verdicts and the captured prompt are
+		// session-scoped state that must not survive a reload.
+		clearAutoCache();
+		clearPromptStore();
+
 		// Restore widget state if mode was changed before a reload.
 		setWidgetForMode(ctx);
 
@@ -157,9 +167,10 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		}
 	});
 
-	pi.on("before_agent_start", async (_event, ctx) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		// Re-arm forwarding against the live context before any tool call.
 		forwardingManager.start(ctx);
+		rememberUserPrompt(ctx.sessionManager.getSessionId(), event.prompt);
 		if (mode === "ignore") return;
 		const config = loader.getConfig();
 
@@ -201,7 +212,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	pi.on("tool_call", async (event, ctx) => {
 		if (mode === "ignore") return undefined;
 		const config = loader.getConfig();
-		return handleToolCall(event, ctx, config, mode);
+		return handleToolCall(event, ctx, config, mode, toolInfo);
 	});
 
 	pi.on("tool_result", async (event, _ctx) => {

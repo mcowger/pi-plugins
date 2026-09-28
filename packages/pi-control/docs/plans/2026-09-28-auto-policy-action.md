@@ -1,7 +1,7 @@
 # `auto` Policy Action — Model-Evaluated Fallthrough
 
 **Date:** 2026-09-28
-**Status:** Draft (design agreed; not implemented)
+**Status:** Implemented
 **Scope:** `pi-controls` extension — a new `auto` action that defers an otherwise-unmatched tool call to the Decisions API for a capability/blast-radius evaluation, mapping the model's answers to `allow` / `ask` / `deny` through a deterministic rule table.
 
 ---
@@ -43,13 +43,13 @@ No migration or backward compatibility is required (standing project rule).
 
 ## 3. Decisions API reuse
 
-Same endpoint, auth, and request/response shape as eval classification (`src/utils/decisions.ts`):
+Same endpoint, auth, and request/response shape as eval classification (`src/utils/decisions.ts`, which uses the official `@typesafe-ai/sdk` client; `decisions.url` stays the exact endpoint by rewriting the SDK's fixed `/v1/systemone` path) :
 
 - `POST {decisions.url}`, `Authorization: Bearer $<tokenEnv>`, `X-Title: pi-controls`, `{ model, state, questions, session_id }`.
 - `noul` → `{ noul: p }` (P(true)); `choice` → `{ choice, confidence, probabilities }`.
 - Failures throw `DecisionsError` (`auth` | `http` | `timeout` | `network` | `malformed`) and are mapped via `decisions.errorAction` (default `ask`).
 
-The auto request is a distinct call from eval classification. **When an inline eval source was classified for the same tool call, auto is skipped** (`evalSkipped`/`autoSkipped` reason `eval-classified`): the eval classifier is the specialist for inline code, and this avoids double billing and latency.
+The auto request is a distinct call from eval classification. **Auto is skipped only when every stage that produced the `auto` verdict was itself eval-classified** (`autoSkipped` reason `eval-classified`): the eval classifier is the specialist for those stages, which avoids double billing. A command that mixes an eval stage with a non-eval stage is still evaluated for the non-eval part.
 
 ---
 
@@ -61,8 +61,9 @@ Auto runs for **every tool** — bash, `read`, `write`, `edit`, `grep`, `find`, 
 |---|---|
 | Combined action is not `auto` | No call; normal enforcement. |
 | `ignore` mode | No call (existing short-circuit). |
-| Session allowlist or saved approval rule covers the call | No call; allowed. |
-| Inline eval source already classified | Auto skipped (reason `eval-classified`). |
+| Session allowlist covers the call | No call; allowed. |
+| Saved approval rule matches every target | The approval's `allow` wins the match; no call. Auto still runs when any target is unapproved and remains `auto`. |
+| Every `auto`-producing stage was eval-classified | Auto skipped (reason `eval-classified`). |
 | `decisions` block absent/unconfigured | No call; falls back to `ask` + once-per-session warning. |
 | API error/timeout/auth/malformed | `decisions.errorAction` (default `ask`). |
 | `inform` mode | Call the API; report `would-<action>` with rationale (faithful preview, consistent with eval). |
@@ -191,16 +192,17 @@ Each rule has a stable ID, logged and cited in the UI/LLM messages.
 | D2 | `destructive-concealed` | `destructive=yes` AND `concealed=yes` | **deny** |
 | D3 | `exfil-shape` | `data_sensitivity=sensitive` AND `network=yes` | **deny** |
 | D4 | `concealed-capability` | `concealed=yes` AND (`network=yes` OR `action_class=process_exec`) | **deny** |
-| A1 | `destructive-in-scope` | `destructive=yes` (no deny above) | **ask** |
+| A1 | `destructive` | `destructive=yes` (no deny above) | **ask** |
 | A2 | `write-out-of-scope` | `action_class=local_write` AND `scope ∈ {outside, sensitive_system, unknown}` | **ask** |
 | A3 | `sensitive-read` | `data_sensitivity ∈ {sensitive, unknown}` | **ask** |
 | A4 | `concealed-alone` | `concealed=yes` (no rule above) | **ask** |
 | A5 | `inference-call` | `inference_call=yes` | **ask** |
-| A6 | `uncertain-critical` | `uncertain` on `destructive` / `concealed` / `scope` / `data_sensitivity`, or `action_class=unknown` | **ask** |
+| A6 | `uncertain-critical` | `uncertain` on `destructive` / `concealed` / `data_sensitivity`, `scope ∈ {uncertain, unknown}`, or `action_class ∈ {unknown, uncertain}` | **ask** |
 
 - `network` / `process_exec` **alone** fire no rule — they are modifiers (D3/D4) and backstop inputs. Anti-nag, matching eval.
 - `action_class=remote_write` alone fires no rule (no remote-write special case).
-- `scope=temporary` is benign by design: it is excluded from D1, A2, and the risky-mass set (mirroring eval's `temp`). A destructive temp cleanup therefore falls to A1 (`destructive-in-scope`) → **ask**, never a silent deny.
+- `scope=temporary` is benign by design: it is excluded from D1, A2, and the risky-mass set (mirroring eval's `temp`). A destructive temp cleanup therefore falls to A1 (`destructive`) → **ask**, never a silent deny.
+- `scope=unknown` always asks via A6, regardless of action class — paths that cannot be resolved are treated as uncertain, not benign.
 - `deny` requires a positive Stage-1 rule; the backstop cannot deny.
 
 ### 7.3 Stage 2 — weighted backstop (caps at ask)
@@ -268,7 +270,7 @@ Resolution mirrors `resolveDecisions`: deep-merge code defaults ← global ← l
 
 ## 10. Caching and cost
 
-- Session-scoped verdict cache keyed on a normalized call signature (`sha256` of tool + normalized input + sorted targets + cwd); FIFO cap ~200, mirrors `evalCache`.
+- Session-scoped verdict cache keyed on a call signature (`sha256` of tool + **raw, untruncated** input + sorted targets + cwd + session id); FIFO cap ~200, mirrors `evalCache`. The raw input is hashed because the request state is byte-capped, so hashing the normalized state would collide two calls that share a truncated prefix or head/tail preview. The session id keeps the cache session-scoped rather than process-global.
 - Cache is cleared on config reload / `session_start`.
 - Capability/blast radius are treated as call-intrinsic, so the conversation slice is **not** in the key: a hit may return a verdict computed under different conversation context. Acceptable because no `intent` question exists.
 - **No per-session budget cap and no safe-call pre-filter in v1** (explicitly chosen). Every unmatched call under an auto policy is a request; the cache is the only cost control. A runaway agent on an unlimited key can spend the balance — recommend a key credit limit, as with eval.
@@ -299,7 +301,7 @@ The existing JSONL log (`<agentDir>/extensions/pi-controls.log`) gains an `auto`
 }
 ```
 
-Other kinds: `{ kind: "auto-unavailable" | "auto-error", … , action }`, `{ kind: "auto-cached", key, verdict }`, and a top-level `autoSkipped` (`"eval-classified" | "session-allow" | "approval-rule" | "unconfigured"`) when the feature is in play but bypassed. Full state is logged by design, matching eval.
+Other kinds: `{ kind: "auto-unavailable" | "auto-error", … , action }`, `{ kind: "auto-cached", key, verdict }`, and a top-level `autoSkipped` (`"eval-classified" | "session-allow"`) when the feature is in play but bypassed. Full state is logged by design, matching eval.
 
 ---
 
@@ -318,6 +320,10 @@ Other kinds: `{ kind: "auto-unavailable" | "auto-error", … , action }`, `{ kin
 | `tests/utils/auto-state.test.ts` | **NEW** — per-tool normalization, truncation flags, edit-as-regions, conversation cap, tool-schema lookup |
 | `tests/config.test.ts` | `decisions.auto` defaults/merge/single-override/invalid fallbacks |
 | `tests/hooks/tool-call.test.ts` | auto → allow/ask/deny plumbing; zero-fetch guards (unconfigured, session-allow, approval, eval-classified); once-per-call; rank/combination; trace contents |
+| `src/utils/decisions.ts` | transport now uses `@typesafe-ai/sdk` (`postDecisions`); `decisions.url` stays the exact endpoint via a `fetch` hook that drops the SDK's `/v1/systemone` |
+| `tests/utils/live-env.ts` | **NEW** — loads the repo-root `.env` for the gated live suites |
+| `tests/utils/auto-decisions-online.test.ts` | **NEW** — gated live `classifyAuto` (benign allow; destructive, exfil, sensitive read escalate) |
+| `tests/hooks/tool-call-online.test.ts` | **NEW** — gated live end-to-end `handleToolCall` with the `auto` action |
 | `README.md`, `examples/sample.jsonc` | `auto` action, section, config reference, cost warning |
 
 ---
@@ -326,7 +332,7 @@ Other kinds: `{ kind: "auto-unavailable" | "auto-error", … , action }`, `{ kin
 
 1. `bun run check`, `bunx tsc --noEmit`, `bun test`.
 2. Unit: rule table, buckets, backstop-never-denies, deny toggle, normalization, guards.
-3. Live E2E (opt-in, `PICONTROLS_ONLINE_TESTS=1`): allow case (`ls` in cwd); ask case (write outside cwd); deny case (`sensitive + network`), previewed in `inform` first; unconfigured fallback (`ask` + warning); error case (bad URL → `errorAction`); eval-classified skip (zero auto request); cache hit logs `auto-cached` with no HTTP.
+3. Live, opt-in (`PICONTROLS_ONLINE_TESTS=1`, reads `packages/pi-control/.env` or the environment): `decisions-online.test.ts` (eval) and `auto-decisions-online.test.ts` classify benign vs destructive/exfil/sensitive cases through the SDK; `tool-call-online.test.ts` drives `handleToolCall` end to end. Verified 9/9 passing live.
 4. Inspect `pi-controls.log`: full state, applied config, stage1/stage2, resolved verdict.
 
 ---
@@ -352,10 +358,13 @@ Other kinds: `{ kind: "auto-unavailable" | "auto-error", … , action }`, `{ kin
 6. Cost controls: session verdict cache only. **No** budget cap, **no** safe-call pre-filter.
 7. Transparency: always notify with the deciding rule/score rationale (including `allow`).
 8. Unconfigured `decisions` → `ask` + once-per-session warning. API failures → `decisions.errorAction`.
-9. `auto` is skipped when an inline eval source was classified for the same call.
+9. `auto` is skipped only when every stage that produced the `auto` verdict was itself eval-classified; non-eval stages are still evaluated.
 10. No special case for remote writes.
 11. No dedicated `intent` question; conversation is grounding only; engine stays escalate-only.
 12. Tunable via `decisions.auto` (questions, thresholds, weights, deny toggle), deep-merged over code defaults.
 13. Large inputs: size-cap **and** summarize (edits as regions, writes as size + head/tail).
 14. Enforcement: `deny > ask > auto > log > nudge > allow`; one evaluation per tool call when auto wins; explicit rules win within-policy ties.
 15. Inform mode calls the API and reports `would-<action>`. Cache keyed on call signature, cleared on reload.
+16. `action_class=uncertain` is critical (A6) — an ambiguous effect never reaches a silent allow.
+17. Saved approvals are not a blanket auto skip: they contribute an explicit `allow` per target, and auto still runs when any target remains unapproved.
+18. The auto cache key hashes the raw, untruncated tool input so truncated-prefix collisions cannot reuse a verdict.

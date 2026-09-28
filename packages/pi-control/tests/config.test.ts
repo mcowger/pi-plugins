@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	addApprovalRule,
+	DEFAULT_AUTO,
 	DEFAULT_DECISIONS,
 	findProjectConfigPath,
+	resolveAuto,
 	resolveDecisions,
 } from "../src/config.js";
 
@@ -129,5 +131,83 @@ describe("resolveDecisions", () => {
 		expect(resolved?.yesThreshold).toBe(0.8);
 		expect(resolved?.noThreshold).toBe(0.2);
 		expect(resolved?.errorAction).toBe("deny");
+	});
+
+	it("resolves decisions.auto over the auto defaults", () => {
+		expect(resolveDecisions({})?.auto).toEqual(DEFAULT_AUTO);
+		const resolved = resolveDecisions({ auto: { deny: false } });
+		expect(resolved?.auto.deny).toBe(false);
+		expect(resolved?.auto.backstopThreshold).toBe(
+			DEFAULT_AUTO.backstopThreshold,
+		);
+	});
+});
+
+describe("resolveAuto", () => {
+	it("fills an absent or invalid block with code defaults", () => {
+		expect(resolveAuto(undefined)).toEqual(DEFAULT_AUTO);
+		expect(resolveAuto(null)).toEqual(DEFAULT_AUTO);
+		expect(resolveAuto("nope")).toEqual(DEFAULT_AUTO);
+		expect(resolveAuto([])).toEqual(DEFAULT_AUTO);
+		expect(resolveAuto({})).toEqual(DEFAULT_AUTO);
+	});
+
+	it("overrides individual fields including a single weight", () => {
+		const resolved = resolveAuto({
+			backstopThreshold: 12,
+			maxInputBytes: 1024,
+			maxConversationTurns: 3,
+			weights: { scopeRisky: 5 },
+		});
+		expect(resolved.backstopThreshold).toBe(12);
+		expect(resolved.maxInputBytes).toBe(1024);
+		expect(resolved.maxConversationTurns).toBe(3);
+		expect(resolved.weights.scopeRisky).toBe(5);
+		expect(resolved.weights.destructive).toBe(DEFAULT_AUTO.weights.destructive);
+	});
+
+	it("falls back to defaults for invalid values", () => {
+		const resolved = resolveAuto({
+			yesThreshold: 0.2,
+			noThreshold: 0.8,
+			choiceConfidence: 7,
+			riskyMassThreshold: 0,
+			backstopThreshold: -1,
+			maxConversationBytes: Number.NaN,
+			weights: { destructive: -1, network: "lots" },
+		});
+		expect(resolved.yesThreshold).toBe(DEFAULT_AUTO.yesThreshold);
+		expect(resolved.noThreshold).toBe(DEFAULT_AUTO.noThreshold);
+		expect(resolved.choiceConfidence).toBe(DEFAULT_AUTO.choiceConfidence);
+		expect(resolved.riskyMassThreshold).toBe(DEFAULT_AUTO.riskyMassThreshold);
+		expect(resolved.backstopThreshold).toBe(DEFAULT_AUTO.backstopThreshold);
+		expect(resolved.maxConversationBytes).toBe(
+			DEFAULT_AUTO.maxConversationBytes,
+		);
+		expect(resolved.weights.destructive).toBe(DEFAULT_AUTO.weights.destructive);
+		expect(resolved.weights.network).toBe(DEFAULT_AUTO.weights.network);
+	});
+
+	it("treats only an explicit false as disabling deny", () => {
+		expect(resolveAuto({ deny: false }).deny).toBe(false);
+		expect(resolveAuto({ deny: true }).deny).toBe(true);
+		expect(resolveAuto({ deny: "no" }).deny).toBe(true);
+	});
+
+	it("sanitizes per-question overrides", () => {
+		const resolved = resolveAuto({
+			questions: {
+				action_class: {
+					instructions: "custom",
+					criteria: { local_write: "write", bad: 5 },
+				},
+				junk: 7,
+			},
+		});
+		expect(resolved.questions.action_class).toEqual({
+			instructions: "custom",
+			criteria: { local_write: "write" },
+		});
+		expect(resolved.questions.junk).toBeUndefined();
 	});
 });

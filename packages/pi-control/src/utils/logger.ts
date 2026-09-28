@@ -4,12 +4,14 @@ import type { Action, DecisionsConfig } from "../config.js";
 import type {
 	AnswerBuckets,
 	BackstopResult,
-	DecisionsAnswer,
 	DecisionsQuestion,
+	DecisionsResponse,
 	DecisionsState,
-	DecisionsUsage,
 	Stage1Result,
+	Verdict,
 } from "./decisions.js";
+import type { AppliedAutoConfig, AutoBuckets } from "./auto-decisions.js";
+import type { AutoState } from "./auto-state.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const logPath = resolve(getAgentDir(), "extensions", "pi-controls.log");
@@ -25,6 +27,24 @@ export type AppliedTuningConfig = Pick<
 	| "weights"
 >;
 
+/** The request half of a classified trace, shared by eval and auto. */
+export interface DecisionsRequestTrace<S> {
+	url: string;
+	model: string;
+	state: S;
+	questions: Record<string, DecisionsQuestion>;
+}
+
+/** The evaluation half of a classified trace, shared by eval and auto. */
+export interface DecisionsEvaluationTrace<B, C> {
+	buckets: B;
+	appliedConfig: C;
+	stage1: Stage1Result;
+	/** Always computed, even when Stage 1 already decided. */
+	stage2: BackstopResult;
+	verdict: Verdict;
+}
+
 /** Full-fidelity classified trace — the future auto-tuning dataset. */
 export interface EvalClassifiedTrace {
 	kind: "classified";
@@ -32,27 +52,9 @@ export interface EvalClassifiedTrace {
 	interpreter: string;
 	origin: string;
 	truncated: boolean;
-	request: {
-		url: string;
-		model: string;
-		state: DecisionsState;
-		questions: Record<string, DecisionsQuestion>;
-	};
-	response: {
-		id: string;
-		model: string;
-		provider: string;
-		answers: Record<string, DecisionsAnswer>;
-		usage: DecisionsUsage;
-	};
-	evaluation: {
-		buckets: AnswerBuckets;
-		appliedConfig: AppliedTuningConfig;
-		stage1: Stage1Result;
-		/** Always computed, even when Stage 1 already decided. */
-		stage2: BackstopResult;
-		verdict: "allow" | "ask" | "deny";
-	};
+	request: DecisionsRequestTrace<DecisionsState>;
+	response: DecisionsResponse;
+	evaluation: DecisionsEvaluationTrace<AnswerBuckets, AppliedTuningConfig>;
 	latencyMs: number;
 }
 
@@ -61,7 +63,7 @@ export interface EvalUnavailableTrace {
 	kind: "unavailable";
 	interpreter: string;
 	detail: string;
-	action: "allow" | "ask" | "deny";
+	action: Verdict;
 }
 
 /** API/network/auth/timeout/malformed failure — no usable answers. */
@@ -69,7 +71,7 @@ export interface EvalErrorTrace {
 	kind: "error";
 	interpreter: string;
 	detail: string;
-	action: "allow" | "ask" | "deny";
+	action: Verdict;
 	latencyMs?: number;
 }
 
@@ -80,7 +82,7 @@ export interface EvalErrorTrace {
 export interface EvalCachedTrace {
 	kind: "cached";
 	key: string;
-	verdict: "allow" | "ask" | "deny";
+	verdict: Verdict;
 }
 
 export type EvalTrace =
@@ -88,6 +90,49 @@ export type EvalTrace =
 	| EvalUnavailableTrace
 	| EvalErrorTrace
 	| EvalCachedTrace;
+
+/** Full-fidelity auto classified trace — the future auto-tuning dataset. */
+export interface AutoClassifiedTrace {
+	kind: "auto-classified";
+	request: DecisionsRequestTrace<AutoState>;
+	response: DecisionsResponse;
+	evaluation: DecisionsEvaluationTrace<AutoBuckets, AppliedAutoConfig>;
+	latencyMs: number;
+}
+
+/** Auto is in play but the Decisions API is not configured — no call. */
+export interface AutoUnavailableTrace {
+	kind: "auto-unavailable";
+	detail: string;
+	action: Verdict;
+}
+
+/** API/network/auth/timeout/malformed failure — no usable answers. */
+export interface AutoErrorTrace {
+	kind: "auto-error";
+	detail: string;
+	action: Verdict;
+	latencyMs: number;
+}
+
+/**
+ * Session-cache hit. The full trace was logged on first classification;
+ * `key` joins them.
+ */
+export interface AutoCachedTrace {
+	kind: "auto-cached";
+	key: string;
+	verdict: Verdict;
+}
+
+export type AutoTrace =
+	| AutoClassifiedTrace
+	| AutoUnavailableTrace
+	| AutoErrorTrace
+	| AutoCachedTrace;
+
+/** Why the auto evaluation was bypassed without an API call. */
+export type AutoSkipReason = "eval-classified" | "session-allow";
 
 interface LogEntry {
 	ts: string;
@@ -102,6 +147,10 @@ interface LogEntry {
 	evals?: EvalTrace[];
 	/** Set when the feature is configured but bypassed by approval. */
 	evalSkipped?: "session-allow" | "approval-rule";
+	/** Auto-action trace, when the `auto` action was evaluated for this call. */
+	auto?: AutoTrace;
+	/** Set when the auto feature is in play but bypassed. */
+	autoSkipped?: AutoSkipReason;
 }
 
 export async function logDecision(entry: LogEntry): Promise<void> {

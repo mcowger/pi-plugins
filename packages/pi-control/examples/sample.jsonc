@@ -15,6 +15,8 @@
 		// Full access inside the working project, except git commit and git push
 		// require explicit confirmation.
 		"cwd": {
+			// Set to "auto" to defer otherwise-unmatched calls to the Decisions
+			// API (see the `decisions` block below) instead of allowing them.
 			"defaultAction": "allow",
 			"rules": [
 				// Force-push is always blocked — too destructive to allow interactively.
@@ -255,6 +257,43 @@
 			"writeUnknown": 20,
 			"readSensitive": 40,
 			"readUnknown": 20
+		},
+
+		// ── Auto fallthrough ────────────────────────────────────────────────
+		// Tuning for the `auto` action. Use `"defaultAction": "auto"` (or an
+		// { "action": "auto", ... } rule) to defer otherwise-unmatched calls to
+		// the Decisions API, which answers universal capability/blast-radius
+		// questions. Only four curated shapes can deny; everything else risky
+		// asks. Shares url/tokenEnv/model/timeoutMs/errorAction with eval
+		// classification above.
+		"auto": {
+			// false ⇒ the engine can never deny; verdicts cap at ask.
+			"deny": true,
+
+			// Bucket thresholds (same meaning as the eval ones above).
+			"yesThreshold": 0.7,
+			"noThreshold": 0.3,
+			"choiceConfidence": 0.6,
+			"riskyMassThreshold": 0.35,
+			"backstopThreshold": 40,
+
+			// Context limits: per-field input cap and conversation window.
+			"maxInputBytes": 16384,
+			"maxConversationTurns": 6,
+			"maxConversationBytes": 8192,
+
+			// Backstop weights (deep-merged; override single entries).
+			"weights": {
+				"destructive": 100,
+				"concealed": 40,
+				"network": 20,
+				"inferenceCall": 10,
+				"scopeRisky": 30,
+				"sensitiveData": 50
+			}
+
+			// Per-question overrides, e.g.:
+			// "questions": { "action_class": { "instructions": "…" } }
 		}
 	}
 }

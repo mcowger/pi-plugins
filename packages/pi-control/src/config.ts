@@ -18,7 +18,7 @@ import { SAFE_BASH_PATTERNS } from "./utils/safe-commands.js";
 
 // ─── Schema types ─────────────────────────────────────────────────────────────
 
-export type Action = "allow" | "ask" | "deny" | "log" | "nudge";
+export type Action = "allow" | "ask" | "deny" | "log" | "nudge" | "auto";
 
 export interface Rule {
 	action: Action;
@@ -52,6 +52,71 @@ export interface DecisionsWeights {
 	readUnknown: number;
 }
 
+/** Backstop weights for the auto capability/blast-radius evaluation. */
+export interface AutoWeights {
+	destructive: number;
+	concealed: number;
+	network: number;
+	inferenceCall: number;
+	scopeRisky: number;
+	sensitiveData: number;
+}
+
+/** Per-question override for one auto question. */
+export interface AutoQuestionOverride {
+	instructions?: string;
+	criteria?: Record<string, string>;
+}
+
+/**
+ * Tuning for the `auto` action's Decisions evaluation. Transport, auth, and
+ * model are shared with eval classification (the parent `decisions` block).
+ */
+export interface AutoConfig {
+	/** When false, the engine can never deny — verdicts cap at ask. */
+	deny: boolean;
+	/** noul p >= this → YES. */
+	yesThreshold: number;
+	/** noul p <= this → NO; between → UNCERTAIN. */
+	noThreshold: number;
+	/** choice P(top) >= this → confident label, else mass check. */
+	choiceConfidence: number;
+	/** Risky-label mass at/above this → UNCERTAIN; below → top label. */
+	riskyMassThreshold: number;
+	/** Backstop score >= this → ask (the backstop never denies). */
+	backstopThreshold: number;
+	/** Per normalized input field size cap, in bytes. */
+	maxInputBytes: number;
+	/** How many trailing conversation entries to send as grounding. */
+	maxConversationTurns: number;
+	/** Total byte cap over the conversation slice. */
+	maxConversationBytes: number;
+	weights: AutoWeights;
+	/** Per-question overrides, merged over the built-in question set. */
+	questions: Record<string, AutoQuestionOverride>;
+}
+
+export const DEFAULT_AUTO: AutoConfig = {
+	deny: true,
+	yesThreshold: 0.7,
+	noThreshold: 0.3,
+	choiceConfidence: 0.6,
+	riskyMassThreshold: 0.35,
+	backstopThreshold: 40,
+	maxInputBytes: 16384,
+	maxConversationTurns: 6,
+	maxConversationBytes: 8192,
+	weights: {
+		destructive: 100,
+		concealed: 40,
+		network: 20,
+		inferenceCall: 10,
+		scopeRisky: 30,
+		sensitiveData: 50,
+	},
+	questions: {},
+};
+
 export interface DecisionsConfig {
 	/** Full endpoint URL of the Decisions API. */
 	url: string;
@@ -76,6 +141,8 @@ export interface DecisionsConfig {
 	/** Backstop score >= this → ask (the backstop never denies). */
 	backstopThreshold: number;
 	weights: DecisionsWeights;
+	/** Tuning for the `auto` action (see AutoConfig). */
+	auto: AutoConfig;
 }
 
 export const DEFAULT_DECISIONS: DecisionsConfig = {
@@ -103,6 +170,7 @@ export const DEFAULT_DECISIONS: DecisionsConfig = {
 		readSensitive: 40,
 		readUnknown: 20,
 	},
+	auto: DEFAULT_AUTO,
 };
 
 function validCount(value: unknown, fallback: number): number {
@@ -126,18 +194,18 @@ function validFallback(
 		: fallback;
 }
 
-/**
- * Resolve a raw (possibly partial) decisions block over the code defaults.
- * Returns null when absent or not an object — the feature stays off.
- * Invalid individual fields fall back to their defaults; the applied values
- * are always visible in the eval log trace.
- */
-export function resolveDecisions(raw: unknown): DecisionsConfig | null {
-	if (raw === undefined || raw === null) return null;
-	if (typeof raw !== "object" || Array.isArray(raw)) return null;
-	const input = raw as Record<string, unknown>;
-	const defaults = structuredClone(DEFAULT_DECISIONS);
+interface ThresholdConfig {
+	yesThreshold: number;
+	noThreshold: number;
+	choiceConfidence: number;
+	riskyMassThreshold: number;
+}
 
+/** Shared threshold/bucket validation for the eval and auto decisions blocks. */
+function resolveThresholds(
+	input: Record<string, unknown>,
+	defaults: ThresholdConfig,
+): ThresholdConfig {
 	const yesThreshold =
 		typeof input.yesThreshold === "number" &&
 		Number.isFinite(input.yesThreshold)
@@ -163,6 +231,27 @@ export function resolveDecisions(raw: unknown): DecisionsConfig | null {
 		input.riskyMassThreshold <= 1
 			? input.riskyMassThreshold
 			: defaults.riskyMassThreshold;
+	return {
+		yesThreshold: thresholdsValid ? yesThreshold : defaults.yesThreshold,
+		noThreshold: thresholdsValid ? noThreshold : defaults.noThreshold,
+		choiceConfidence,
+		riskyMassThreshold,
+	};
+}
+
+/**
+ * Resolve a raw (possibly partial) decisions block over the code defaults.
+ * Returns null when absent or not an object — the feature stays off.
+ * Invalid individual fields fall back to their defaults; the applied values
+ * are always visible in the eval log trace.
+ */
+export function resolveDecisions(raw: unknown): DecisionsConfig | null {
+	if (raw === undefined || raw === null) return null;
+	if (typeof raw !== "object" || Array.isArray(raw)) return null;
+	const input = raw as Record<string, unknown>;
+	const defaults = structuredClone(DEFAULT_DECISIONS);
+
+	const thresholds = resolveThresholds(input, defaults);
 
 	const rawWeights =
 		input.weights !== null && typeof input.weights === "object"
@@ -222,15 +311,118 @@ export function resolveDecisions(raw: unknown): DecisionsConfig | null {
 			defaults.unavailableAction,
 		),
 		errorAction: validFallback(input.errorAction, defaults.errorAction),
-		yesThreshold: thresholdsValid ? yesThreshold : defaults.yesThreshold,
-		noThreshold: thresholdsValid ? noThreshold : defaults.noThreshold,
-		choiceConfidence,
-		riskyMassThreshold,
+		yesThreshold: thresholds.yesThreshold,
+		noThreshold: thresholds.noThreshold,
+		choiceConfidence: thresholds.choiceConfidence,
+		riskyMassThreshold: thresholds.riskyMassThreshold,
 		backstopThreshold: validCount(
 			input.backstopThreshold,
 			defaults.backstopThreshold,
 		),
 		weights,
+		auto: resolveAuto(input.auto),
+	};
+}
+
+function resolveAutoQuestionOverrides(
+	raw: unknown,
+): Record<string, AutoQuestionOverride> {
+	if (raw === undefined || raw === null) return {};
+	if (typeof raw !== "object" || Array.isArray(raw)) return {};
+	const overrides: Record<string, AutoQuestionOverride> = {};
+	for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (value === null || typeof value !== "object" || Array.isArray(value)) {
+			continue;
+		}
+		const entry = value as Record<string, unknown>;
+		const override: AutoQuestionOverride = {};
+		if (
+			typeof entry.instructions === "string" &&
+			entry.instructions.length > 0
+		) {
+			override.instructions = entry.instructions;
+		}
+		if (
+			entry.criteria !== null &&
+			typeof entry.criteria === "object" &&
+			!Array.isArray(entry.criteria)
+		) {
+			const criteria: Record<string, string> = {};
+			for (const [label, text] of Object.entries(
+				entry.criteria as Record<string, unknown>,
+			)) {
+				if (typeof text === "string") criteria[label] = text;
+			}
+			override.criteria = criteria;
+		}
+		if (Object.keys(override).length > 0) overrides[name] = override;
+	}
+	return overrides;
+}
+
+/**
+ * Resolve a raw (possibly partial) `decisions.auto` block over the code
+ * defaults. Always returns a usable config — the `auto` action is enabled by
+ * using it, so there is no separate on/off switch. Invalid individual fields
+ * fall back to their defaults.
+ */
+export function resolveAuto(raw: unknown): AutoConfig {
+	const defaults = structuredClone(DEFAULT_AUTO);
+	if (
+		raw === undefined ||
+		raw === null ||
+		typeof raw !== "object" ||
+		Array.isArray(raw)
+	) {
+		return defaults;
+	}
+	const input = raw as Record<string, unknown>;
+
+	const thresholds = resolveThresholds(input, defaults);
+
+	const rawWeights =
+		input.weights !== null && typeof input.weights === "object"
+			? (input.weights as Record<string, unknown>)
+			: {};
+	const weights: AutoWeights = {
+		destructive: validWeight(
+			rawWeights.destructive,
+			defaults.weights.destructive,
+		),
+		concealed: validWeight(rawWeights.concealed, defaults.weights.concealed),
+		network: validWeight(rawWeights.network, defaults.weights.network),
+		inferenceCall: validWeight(
+			rawWeights.inferenceCall,
+			defaults.weights.inferenceCall,
+		),
+		scopeRisky: validWeight(rawWeights.scopeRisky, defaults.weights.scopeRisky),
+		sensitiveData: validWeight(
+			rawWeights.sensitiveData,
+			defaults.weights.sensitiveData,
+		),
+	};
+
+	return {
+		deny: input.deny === false ? false : defaults.deny,
+		yesThreshold: thresholds.yesThreshold,
+		noThreshold: thresholds.noThreshold,
+		choiceConfidence: thresholds.choiceConfidence,
+		riskyMassThreshold: thresholds.riskyMassThreshold,
+		backstopThreshold: validCount(
+			input.backstopThreshold,
+			defaults.backstopThreshold,
+		),
+		maxInputBytes: validCount(input.maxInputBytes, defaults.maxInputBytes),
+		maxConversationTurns: validCount(
+			input.maxConversationTurns,
+			defaults.maxConversationTurns,
+		),
+		maxConversationBytes: validCount(
+			input.maxConversationBytes,
+			defaults.maxConversationBytes,
+		),
+		weights,
+		questions: resolveAutoQuestionOverrides(input.questions),
 	};
 }
 
