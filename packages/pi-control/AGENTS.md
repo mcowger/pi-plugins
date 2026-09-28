@@ -14,13 +14,15 @@ A **pi extension and npm package** that intercepts tool calls made by the pi cod
 ## Developer commands
 
 ```sh
-bun install        # install deps
-bun test           # run all 67 tests (5 files, ~600ms)
+bun install        # required first in a fresh worktree before test/check
+bun test           # run all 203 tests (12 files, ~300ms)
 bun run check      # lint via Biome (exits 1 if issues found)
 bun run format     # auto-format with Biome --write
 ```
 
-`bun run check` currently reports lint errors in `src/utils/logger.ts` (use `export type`) and formatting issues in `examples/sample.jsonc`. These are pre-existing and not regressions.
+If tests or `bun run check` fail with missing packages
+(`Cannot find package ...`, `Cannot find type definition file ...`),
+re-run `bun install` before investigating further.
 
 Run a single test file:
 ```sh

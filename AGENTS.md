@@ -5,10 +5,14 @@ This repository contains independent Pi packages in `packages/`.
 ## Commands
 
 ```sh
-bun install
+bun install      # required first in a fresh worktree (or run ./init_worktree.sh)
 bun run check
-bun test
+bun test           # runs `bun install` first, then all package suites
 ```
+
+If checks or tests fail with missing packages (`Cannot find package ...`,
+`Cannot find type definition file ...`), re-run `bun install` before
+investigating further.
 
 Use `bun --cwd packages/<package> ...` to work on one package. Package manifests keep the
 published npm names and Pi extension manifests. The root workspace is private and is not itself a
