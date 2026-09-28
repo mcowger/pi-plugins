@@ -58,6 +58,10 @@ export interface MatchResult {
 	matchedPattern?: string;
 	/** For nudge rules, the reminder message to inject into the tool result. */
 	nudgeMessage?: string;
+	/** True when a rule decided the verdict; false when the policy defaultAction won. */
+	matchedRule: boolean;
+	/** The tool glob of the winning rule (undefined when the defaultAction won). */
+	matchedTool?: string;
 }
 
 // ─── Rule matching ────────────────────────────────────────────────────────────
@@ -87,6 +91,7 @@ export function matchRuleWithDetails(
 	let bestAction: Action | null = null;
 	let bestPattern: string | undefined;
 	let bestNudgeMessage: string | undefined;
+	let bestTool: string | undefined;
 	for (const rule of policy.rules) {
 		// Tool glob must match.
 		if (!matchTool(rule.tool, toolName)) continue;
@@ -111,6 +116,7 @@ export function matchRuleWithDetails(
 			bestAction = rule.action;
 			bestPattern = patternMatched ? rule.pattern : undefined;
 			bestNudgeMessage = rule.action === "nudge" ? rule.message : undefined;
+			bestTool = rule.tool;
 		}
 	}
 
@@ -118,6 +124,8 @@ export function matchRuleWithDetails(
 		action: bestAction ?? policy.defaultAction,
 		matchedPattern: bestPattern,
 		nudgeMessage: bestNudgeMessage,
+		matchedRule: bestAction !== null,
+		matchedTool: bestTool,
 	};
 }
 

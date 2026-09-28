@@ -984,6 +984,9 @@ describe("eval classification via Decisions API", () => {
 			block: true,
 			reason: expect.stringContaining("destructive-concealed-or-outside"),
 		});
+		// An eval verdict is not a path restriction; it must not claim one.
+		expect(result?.reason).not.toContain("blocked path");
+		expect(result?.reason).not.toContain("restriction is on the PATH");
 	});
 
 	it("asks on out-of-scope writes and shows the rationale", async () => {
@@ -1321,5 +1324,171 @@ describe("forwarded asks from subagent children", () => {
 		expect(result?.block).toBe(true);
 		expect(result?.reason).toContain("no interactive UI");
 		expect(result?.reason).not.toContain("Blocked by user");
+	});
+});
+
+describe("deny reason selects the sentence from the deciding rule", () => {
+	beforeEach(() => {
+		nudgeTrackers.clear();
+		denyTracker.reset();
+		sessionAllows.clear();
+	});
+
+	const patternDenyConfig: ControlsResolvedConfig = {
+		policies: {
+			guarded: {
+				defaultAction: "allow",
+				rules: [{ action: "deny", tool: "bash", pattern: "dd *" }],
+			},
+		},
+		locations: { "/tmp": "guarded" },
+		defaultPolicy: null,
+		cycleKey: "ctrl+shift+m",
+		agentTimeout: null,
+		nudgeTimeout: null,
+		pathProtection: null,
+		decisions: null,
+	};
+
+	it("pattern deny cites the pattern and does not name the cwd as a blocked path", async () => {
+		const result = await handleToolCall(
+			bashEvent("dd bs=1M", "pattern-deny"),
+			makeCtx("/tmp"),
+			patternDenyConfig,
+		);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain('pattern: "dd *"');
+		expect(result?.reason).toContain("Avoid the blocked pattern in any retry");
+		expect(result?.reason).not.toContain("blocked path");
+		expect(result?.reason).not.toContain("/tmp");
+	});
+
+	it("tool deny points at the tool and says another tool can still reach the path", async () => {
+		const toolDenyConfig: ControlsResolvedConfig = {
+			...patternDenyConfig,
+			policies: {
+				guarded: {
+					defaultAction: "allow",
+					rules: [{ action: "deny", tool: "write" }],
+				},
+			},
+		};
+		const result = await handleToolCall(
+			toolEvent("write", "tool-deny", { file_path: "/tmp/foo.ts" }),
+			makeCtx("/tmp"),
+			toolDenyConfig,
+		);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain('restriction is on the tool "write"');
+		expect(result?.reason).toContain("another tool can still reach it");
+		expect(result?.reason).toContain('path: "/tmp/foo.ts"');
+		expect(result?.reason).not.toContain("blocked path");
+		expect(result?.reason).not.toContain("restriction is on the PATH");
+	});
+
+	it("policy default deny keeps the path restriction sentence", async () => {
+		const defaultDenyConfig: ControlsResolvedConfig = {
+			...patternDenyConfig,
+			policies: { guarded: { defaultAction: "deny", rules: [] } },
+		};
+		const result = await handleToolCall(
+			toolEvent("read", "default-deny", { file_path: "/tmp/foo.ts" }),
+			makeCtx("/tmp"),
+			defaultDenyConfig,
+		);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain("The restriction is on the PATH");
+		expect(result?.reason).toContain('blocked path: "/tmp/foo.ts"');
+		expect(result?.reason).toContain("all access to these paths is blocked");
+	});
+
+	it("universal tool glob deny is a path restriction", async () => {
+		const universalDenyConfig: ControlsResolvedConfig = {
+			...patternDenyConfig,
+			policies: {
+				guarded: {
+					defaultAction: "allow",
+					rules: [{ action: "deny", tool: "*" }],
+				},
+			},
+		};
+		const result = await handleToolCall(
+			toolEvent("write", "universal-deny", { file_path: "/tmp/foo.ts" }),
+			makeCtx("/tmp"),
+			universalDenyConfig,
+		);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain("The restriction is on the PATH");
+		expect(result?.reason).toContain('blocked path: "/tmp/foo.ts"');
+	});
+
+	it("escalated bash pattern nudge uses the pattern sentence, not the path sentence", async () => {
+		const escalatedPatternConfig: ControlsResolvedConfig = {
+			...patternDenyConfig,
+			policies: {
+				guarded: {
+					defaultAction: "allow",
+					rules: [
+						{
+							action: "nudge",
+							tool: "bash",
+							pattern: "grep *",
+							message: "Prefer the grep tool over grep",
+						},
+					],
+				},
+			},
+			nudgeTimeout: { maxNudges: 2, windowSeconds: 60 },
+		};
+		const ctx = makeCtx("/tmp");
+		await handleToolCall(
+			bashEvent("grep foo", "pn-1"),
+			ctx,
+			escalatedPatternConfig,
+		);
+		const r2 = await handleToolCall(
+			bashEvent("grep bar", "pn-2"),
+			ctx,
+			escalatedPatternConfig,
+		);
+		expect(r2?.block).toBe(true);
+		expect(r2?.reason).toContain('pattern: "grep *"');
+		expect(r2?.reason).toContain("Avoid the blocked pattern in any retry");
+		expect(r2?.reason).toContain("Prefer the grep tool over grep");
+		expect(r2?.reason).not.toContain("restriction is on the PATH");
+	});
+
+	it("escalated non-bash nudge points at the tool, not the path", async () => {
+		const escalatedToolConfig: ControlsResolvedConfig = {
+			...patternDenyConfig,
+			policies: {
+				guarded: {
+					defaultAction: "allow",
+					rules: [
+						{
+							action: "nudge",
+							tool: "read",
+							message: "Prefer pluck_read",
+						},
+					],
+				},
+			},
+			nudgeTimeout: { maxNudges: 2, windowSeconds: 60 },
+		};
+		const ctx = makeCtx("/tmp");
+		await handleToolCall(
+			toolEvent("read", "en-1", { file_path: "/tmp/a.ts" }),
+			ctx,
+			escalatedToolConfig,
+		);
+		const r2 = await handleToolCall(
+			toolEvent("read", "en-2", { file_path: "/tmp/a.ts" }),
+			ctx,
+			escalatedToolConfig,
+		);
+		expect(r2?.block).toBe(true);
+		expect(r2?.reason).toContain('restriction is on the tool "read"');
+		expect(r2?.reason).toContain("another tool can still reach it");
+		expect(r2?.reason).not.toContain("restriction is on the PATH");
 	});
 });

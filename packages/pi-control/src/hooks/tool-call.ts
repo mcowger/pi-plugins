@@ -303,6 +303,78 @@ function buildContextSuffix(
 	return parts.length > 0 ? ` — ${parts.join(", ")}` : "";
 }
 
+/**
+ * Which kind of rule decided a verdict. Drives the restricted-path vs
+ * restricted-pattern vs restricted-tool wording so the message reflects the
+ * actual restriction instead of whether any path happened to resolve.
+ */
+type VerdictBasis = "pattern" | "tool" | "path" | "eval";
+
+/**
+ * Classify the rule behind the final action. `evalDecided` is true when an
+ * eval-classification verdict, not a location rule, produced the final action.
+ */
+function resolveVerdictBasis(
+	matches: {
+		action: Action;
+		matchedPattern?: string;
+		matchedRule: boolean;
+		matchedTool?: string;
+	}[],
+	finalAction: Action,
+	evalDecided = false,
+): VerdictBasis {
+	const finalMatches = matches.filter((match) => match.action === finalAction);
+	if (finalMatches.length === 0) return evalDecided ? "eval" : "path";
+	// A policy defaultAction or a universal tool glob blocks every tool here.
+	if (
+		finalMatches.some(
+			(match) => !match.matchedRule || match.matchedTool === "*",
+		)
+	)
+		return "path";
+	// Otherwise a matched rule decides: a bash pattern or a specific tool.
+	if (finalMatches.some((match) => match.matchedPattern !== undefined))
+		return "pattern";
+	return "tool";
+}
+
+/** Whether a verdict should name the paths involved. */
+function verdictShowsPaths(basis: VerdictBasis): boolean {
+	return basis === "path" || basis === "tool";
+}
+
+/** The path label used in a verdict message for a given basis. */
+function verdictPathLabel(basis: VerdictBasis): string {
+	return basis === "path" ? "blocked path" : "path";
+}
+
+/** Sentence appended to a deny reason describing where the restriction lies. */
+function pathRestrictionNote(
+	basis: VerdictBasis,
+	toolName: string,
+	deniedPaths: string[],
+): string {
+	if (basis === "pattern") {
+		return " Avoid the blocked pattern in any retry.";
+	}
+	if (basis === "eval") {
+		return " Avoid this operation in any retry; a different tool or a rewritten command does not change it.";
+	}
+	if (basis === "tool") {
+		if (deniedPaths.length === 0) {
+			return ` The restriction is on the tool "${toolName}", not on any path — another tool can still perform this operation.`;
+		}
+		const label = deniedPaths.length > 1 ? "paths" : "path";
+		const pronoun = deniedPaths.length > 1 ? "them" : "it";
+		const paths = deniedPaths.map((p) => `"${p}"`).join(", ");
+		return ` The restriction is on the tool "${toolName}", not the ${label} ${paths} — another tool can still reach ${pronoun}. Retry with a different tool instead.`;
+	}
+	return deniedPaths.length > 0
+		? ` The restriction is on the PATH${deniedPaths.length > 1 ? "S" : ""} ${deniedPaths.map((p) => `"${p}"`).join(", ")} — not on the tool. Do NOT retry with a different tool (read, ls, glob, cat, etc.); all access to these paths is blocked.`
+		: " Do NOT retry with a different tool; this path is blocked regardless of which tool is used.";
+}
+
 /** Rule details for persisting an "Allow for Project/Globally" choice. */
 interface ApprovalPersistence {
 	rule: Rule;
@@ -456,6 +528,7 @@ function notifyDecision(
 	matchedPattern?: string,
 	nudgeMessage?: string,
 	decisionNote?: string,
+	verdictBasis?: VerdictBasis,
 ): void {
 	// In inform mode show everything (including allow) so user sees the full picture.
 	// In enforce mode, allow is silent — only show non-allow decisions.
@@ -478,9 +551,21 @@ function notifyDecision(
 		// Single line: no path label (not blocked), nudge message inline.
 		ctx.ui.notify(`pi-controls: nudge${policy} — ${nudgeMessage}`, "warning");
 	} else {
-		// Use "path" for log/ask (not yet blocked); "blocked path" only for deny.
-		const pathLabel = action === "deny" ? "blocked path" : "path";
-		const context = buildContextSuffix(deniedPaths, matchedPattern, pathLabel);
+		// Pattern and eval denies have no path restriction to name; a tool deny
+		// names a reachable path, and only a genuine path restriction is "blocked".
+		const showsPaths =
+			verdictBasis === undefined || verdictShowsPaths(verdictBasis);
+		const pathLabel =
+			verdictBasis !== undefined && action === "deny"
+				? verdictPathLabel(verdictBasis)
+				: action === "deny"
+					? "blocked path"
+					: "path";
+		const context = buildContextSuffix(
+			showsPaths ? deniedPaths : [],
+			matchedPattern,
+			pathLabel,
+		);
 		const evalSuffix = decisionNote ? ` — eval: ${decisionNote}` : "";
 		ctx.ui.notify(
 			`pi-controls: ${label}${policy}${cmd}${context}${evalSuffix}`,
@@ -502,6 +587,7 @@ async function executeAction(
 	summary?: string,
 	approvalPersistence?: ApprovalPersistence,
 	decisionNote?: string,
+	verdictBasis?: VerdictBasis,
 ): Promise<ToolCallEventResult | undefined> {
 	switch (action) {
 		case "allow":
@@ -607,13 +693,15 @@ async function executeAction(
 		}
 
 		case "deny": {
+			const basis: VerdictBasis = verdictBasis ?? "path";
 			const cmdPart = command ? ` (${command.slice(0, 80)})` : "";
-			const context = buildContextSuffix(deniedPaths, matchedPattern);
+			const context = buildContextSuffix(
+				verdictShowsPaths(basis) ? deniedPaths : [],
+				matchedPattern,
+				verdictPathLabel(basis),
+			);
 			const evalSuffix = decisionNote ? ` [eval: ${decisionNote}]` : "";
-			const pathNote =
-				deniedPaths.length > 0
-					? ` The restriction is on the PATH${deniedPaths.length > 1 ? "S" : ""} ${deniedPaths.map((p) => `"${p}"`).join(", ")} — not on the tool. Do NOT retry with a different tool (read, ls, glob, cat, etc.); all access to these paths is blocked.`
-					: " Do NOT retry with a different tool; this path is blocked regardless of which tool is used.";
+			const pathNote = pathRestrictionNote(basis, toolName, deniedPaths);
 			const nudgeNote = escalatedFromNudge
 				? ` You were repeatedly warned: "${escalatedFromNudge}". You MUST switch approach now.`
 				: "";
@@ -717,6 +805,8 @@ export async function handleToolCall(
 			matchedPattern?: string;
 			nudgeMessage?: string;
 			ruleKey?: string;
+			matchedRule: boolean;
+			matchedTool?: string;
 		}[] = [];
 		const targets: string[] = [];
 		const policyNames = new Set<string>();
@@ -754,6 +844,8 @@ export async function handleToolCall(
 						matchedPattern: result.matchedPattern,
 						nudgeMessage: result.nudgeMessage,
 						ruleKey: nudgeKey("bash", result.matchedPattern),
+						matchedRule: result.matchedRule,
+						matchedTool: result.matchedTool,
 					});
 				}
 			}
@@ -815,6 +907,15 @@ export async function handleToolCall(
 		const bashNudgeKey =
 			nudgeMatch?.ruleKey ?? nudgeKey("bash", matchedPattern);
 		const deniedTargets = finalAction === "deny" ? uniqueTargets : [];
+		// Track whether an eval verdict, rather than a location rule, decided.
+		const locationDecided = matchResults.some(
+			(result) => result.action === finalAction,
+		);
+		const verdictBasis: VerdictBasis = resolveVerdictBasis(
+			matchResults,
+			finalAction,
+			evalActions.length > 0 && !locationDecided,
+		);
 
 		// Cite the eval rationale when an eval verdict is binding or tied
 		// with the location verdict (never for silent allows).
@@ -850,6 +951,7 @@ export async function handleToolCall(
 			matchedPattern,
 			nudgeMessage,
 			evalNote,
+			verdictBasis,
 		);
 		if (mode === "inform") return undefined;
 		const effectiveBashAction = applyNudgeTimeout(
@@ -890,6 +992,7 @@ export async function handleToolCall(
 			summary,
 			approvalPersistence,
 			evalNote,
+			verdictBasis,
 		);
 	}
 
@@ -899,6 +1002,8 @@ export async function handleToolCall(
 		action: Action;
 		nudgeMessage?: string;
 		ruleKey: string;
+		matchedRule: boolean;
+		matchedTool?: string;
 	}[] = [];
 	const policyNames = new Set<string>();
 	let policyName: string | null = null;
@@ -915,6 +1020,8 @@ export async function handleToolCall(
 				action: result.action,
 				nudgeMessage: result.nudgeMessage,
 				ruleKey: nudgeKey(event.toolName),
+				matchedRule: result.matchedRule,
+				matchedTool: result.matchedTool,
 			});
 		}
 	}
@@ -938,6 +1045,10 @@ export async function handleToolCall(
 	);
 	const nudgeMessage = nudgeMatch?.nudgeMessage;
 	const toolNudgeKey = nudgeMatch?.ruleKey ?? nudgeKey(event.toolName);
+	const verdictBasis: VerdictBasis = resolveVerdictBasis(
+		matchResults,
+		finalAction,
+	);
 
 	await logDecision({
 		ts: new Date().toISOString(),
@@ -957,6 +1068,8 @@ export async function handleToolCall(
 		targets,
 		undefined,
 		nudgeMessage,
+		undefined,
+		verdictBasis,
 	);
 	if (mode === "inform") return undefined;
 	const effectiveAction = applyNudgeTimeout(
@@ -990,5 +1103,7 @@ export async function handleToolCall(
 		escalatedFromNudge,
 		summary,
 		approvalPersistence,
+		undefined,
+		verdictBasis,
 	);
 }

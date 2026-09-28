@@ -325,11 +325,22 @@ pi-controls: deny [policy]: bash (git commit -m "...") — pattern: "git commit 
 ```
 LLM receives: `Access denied by policy: bash (...) — pattern: "git commit *". Avoid the blocked pattern in any retry.`
 
-**Deny (non-bash tool or path restriction):**
+**Deny (path restriction — every tool is blocked):**
 ```
 pi-controls: deny [policy]: write — blocked path: "/etc/secrets"
 ```
 LLM receives: `Access denied by policy: write — blocked path: "/etc/secrets". The restriction is on the PATH — not on the tool. Do NOT retry with a different tool.`
+
+**Deny (tool restriction — only this tool is blocked):**
+```
+pi-controls: deny [policy]: write — path: "/tmp/out.txt"
+```
+LLM receives: `Access denied by policy: write — path: "/tmp/out.txt". The restriction is on the tool "write", not the path "/tmp/out.txt" — another tool can still reach it. Retry with a different tool instead.`
+
+The sentence is chosen from the rule that decided the verdict. A `pattern` deny cites the
+pattern and never claims a path is blocked (so it never names the cwd fallback), a
+tool-specific rule says another tool can still reach the path, and a policy
+`defaultAction: "deny"` keeps the path-restriction wording.
 
 **Inform mode (would-block preview, nothing actually blocked):**
 ```
@@ -337,8 +348,8 @@ pi-controls: would-deny [policy]: git commit -m "..." — pattern: "git commit *
 ```
 
 Path labels in notifications:
-- **`blocked path`** — only on `deny`, where the path is genuinely inaccessible
-- **`path`** — on `log` and `ask`, where the call is still proceeding or pending approval
+- **`blocked path`** — on a `deny` from a path restriction (`defaultAction: "deny"`), where the path is unreachable by every tool
+- **`path`** — on a `deny` from a tool-specific rule (another tool can still reach it), and on `log`/`ask`
 
 ### Locations
 
@@ -925,9 +936,9 @@ If an agent keeps using a discouraged tool despite repeated nudges, escalate aut
 After 3 ignored nudges for the same rule within 60 seconds, the next call is hard-denied with a reason like:
 
 ```
-[pi-controls] Access denied by policy: read — blocked path: "/home/user/project/src/main.ts".
-The restriction is on the PATH "/home/user/project/src/main.ts" — not on the tool.
-Do NOT retry with a different tool; all access to these paths is blocked.
+[pi-controls] Access denied by policy: read — path: "/home/user/project/src/main.ts".
+The restriction is on the tool "read", not the path "/home/user/project/src/main.ts" — another tool can still reach it.
+Retry with a different tool instead.
 You were repeatedly warned: "Prefer pluck_read for repo files — outline mode + semantic context,
 far cheaper than a raw read." You MUST switch approach now.
 ```
