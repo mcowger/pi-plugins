@@ -84,7 +84,7 @@
 
 		// ── readonly ───────────────────────────────────────────────────────────
 		// Read and inspect only. No writes, no mutations, no git history changes.
-		// "$safe-bash" expands to ~90 allow rules for non-mutating bash commands
+		// "$safe-bash" expands to ~140 allow rules for non-mutating bash commands
 		// (file reading, search, git inspection, system info, package queries).
 		// See src/utils/safe-commands.ts for the full list.
 		"readonly": {

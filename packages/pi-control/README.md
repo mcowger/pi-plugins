@@ -547,7 +547,7 @@ Each pipeline or logical stage (`|`, `&&`, `;`) is evaluated independently. The 
 
 ## Safe Command Patterns
 
-pi-controls ships a built-in preset, `"$safe-bash"`, that expands to ~90 allow rules for non-mutating bash commands. Use it anywhere in a `rules` array instead of listing the patterns by hand.
+pi-controls ships a built-in preset, `"$safe-bash"`, that expands to ~140 allow rules for non-mutating bash commands. Use it anywhere in a `rules` array instead of listing the patterns by hand.
 
 The preset covers:
 
@@ -579,7 +579,7 @@ Place `"$safe-bash"` as an entry in `rules`. It mixes freely with regular rule o
         { "action": "allow", "tool": "ls" },
         { "action": "deny",  "tool": "write" },
         { "action": "deny",  "tool": "edit" },
-        { "action": "allow", "tool": "bash", "pattern": "$safe-bash" }  // expands to ~90 rules
+        { "action": "allow", "tool": "bash", "pattern": "$safe-bash" }  // expands to ~140 rules
       ]
     }
   }

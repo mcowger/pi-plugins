@@ -11,17 +11,25 @@
  * even though they are sometimes used read-only.
  */
 export const SAFE_BASH_PATTERNS: string[] = [
-	// File reading
+	// File reading (bare form reads stdin — e.g. `| head` — still read-only)
 	"cat *",
+	"cat",
 	"head *",
+	"head",
 	"tail *",
+	"tail",
 	"less *",
+	"less",
 	"more *",
+	"more",
 	"strings *",
+	"strings",
 	"xxd *",
+	"xxd",
 	"od *",
+	"od",
 
-	// File metadata and navigation
+	// File metadata and navigation (bare form either errors or reads — never writes)
 	"ls *",
 	"ls",
 	"ll *",
@@ -30,35 +38,58 @@ export const SAFE_BASH_PATTERNS: string[] = [
 	"la",
 	"pwd",
 	"stat *",
+	"stat",
 	"file *",
+	"file",
 	"du *",
+	"du",
 	"df *",
+	"df",
 	"find *",
+	"find",
 
-	// Search
+	// Search (bare form reads stdin — still read-only)
 	"grep *",
+	"grep",
 	"rg *",
+	"rg",
 	"ag *",
+	"ag",
 	"fgrep *",
+	"fgrep",
 	"egrep *",
+	"egrep",
 	"ripgrep *",
+	"ripgrep",
 
-	// Text processing (read-only usage — no -i flag, no redirect)
+	// Text processing (read-only usage — no -i flag, no redirect;
+	// bare form reads stdin — still read-only)
 	"wc *",
+	"wc",
 	"sort *",
+	"sort",
 	"uniq *",
+	"uniq",
 	"cut *",
+	"cut",
 	"tr *",
+	"tr",
 	"column *",
+	"column",
 	"diff *",
+	"diff",
 	"comm *",
+	"comm",
 
 	// Structured data processing. Inline interpreters are intentionally excluded:
 	// their source can perform arbitrary filesystem or process effects.
+	// (bare form errors without a filter — never writes)
 	"jq *",
+	"jq",
 	"yq *",
+	"yq",
 
-	// Git read-only
+	// Git read-only (bare forms either list or error — never mutate)
 	"git status",
 	"git status *",
 	"git log *",
@@ -66,30 +97,46 @@ export const SAFE_BASH_PATTERNS: string[] = [
 	"git diff *",
 	"git diff",
 	"git show *",
+	"git show",
 	"git branch *",
 	"git branch",
 	"git remote *",
+	"git remote",
 	"git tag *",
 	"git tag",
 	"git stash list",
 	"git stash show *",
+	"git stash show",
 	"git blame *",
+	"git blame",
 	"git describe *",
+	"git describe",
 	"git rev-parse *",
+	"git rev-parse",
 	"git ls-files *",
+	"git ls-files",
 	"git ls-tree *",
+	"git ls-tree",
 
-	// System info (read-only)
+	// System info (read-only; bare form prints a line or errors — never writes).
+	// hostname/whoami/id/uptime stay bare-only: extra args can set state
+	// (hostname) or query other users, so they are not blanket-allowed.
 	"echo *",
+	"echo",
 	"printf *",
+	"printf",
 	// `env` without arguments prints variables; with a command it executes it.
 	"env",
 	"printenv *",
 	"printenv",
 	"which *",
+	"which",
 	"type *",
+	"type",
 	"whereis *",
+	"whereis",
 	"uname *",
+	"uname",
 	"hostname",
 	"whoami",
 	"id",
@@ -99,22 +146,34 @@ export const SAFE_BASH_PATTERNS: string[] = [
 	"ps *",
 	"ps",
 
-	// Process / port inspection
+	// Process / port inspection (bare form lists — still read-only)
 	"lsof *",
+	"lsof",
 	"netstat *",
+	"netstat",
 	"ss *",
+	"ss",
 
-	// Package managers (list/info only)
+	// Package managers (list/info only; bare form lists — still read-only)
 	"npm list *",
+	"npm list",
 	"npm outdated *",
+	"npm outdated",
 	"npm info *",
+	"npm info",
 	"npm view *",
+	"npm view",
 	"pip list *",
+	"pip list",
 	"pip show *",
+	"pip show",
 	"pip freeze",
 	"bun pm ls *",
+	"bun pm ls",
 
-	// Build tool info
+	// Build tool info (dry-run prints without executing)
 	"make -n *",
+	"make -n",
 	"make --dry-run *",
+	"make --dry-run",
 ];

@@ -20,4 +20,25 @@ describe("SAFE_BASH_PATTERNS", () => {
 	it("retains bare env for read-only environment inspection", () => {
 		expect(SAFE_BASH_PATTERNS).toContain("env");
 	});
+
+	it("covers bare stdin-filter forms so pipelines never fall through to auto", () => {
+		// Regression: `ls … | head | find … | head` fell through to the
+		// Decisions model because bare `head` matched no `$safe-bash` rule
+		// (`head *` requires an argument).
+		for (const pattern of [
+			"cat",
+			"head",
+			"tail",
+			"sort",
+			"grep",
+			"wc",
+			"jq",
+			"find",
+			"git remote",
+			"echo",
+			"lsof",
+		]) {
+			expect(SAFE_BASH_PATTERNS).toContain(pattern);
+		}
+	});
 });

@@ -50,7 +50,7 @@ Local wins on deep merge. Config is JSONC (comments allowed). The `$cwd` special
 - **Bash parsing:** `bash-parser` (CJS, imported dynamically) produces a full AST. Fallback is a regex tokenizer if the parser fails. Each pipeline stage (`|`, `&&`, `;`) is evaluated independently.
 - **Nudge injection:** `pendingNudges` map in `src/hooks/tool-call.ts` is keyed by `toolCallId`. The `tool_result` handler in `src/index.ts` consumes it to append the message to the tool result content — so the LLM sees it inline.
 - **Modes:** `/controls enforce|ignore|inform` — `ignore` skips all evaluation; `inform` evaluates and shows what would happen but never blocks.
-- **`$safe-bash` preset:** a rule with `"pattern": "$safe-bash"` expands to ~90 allow rules for read-only commands. See `src/utils/safe-commands.ts` for the full list.
+- **`$safe-bash` preset:** a rule with `"pattern": "$safe-bash"` expands to ~140 allow rules for read-only commands. See `src/utils/safe-commands.ts` for the full list.
 
 ## Source layout
 
