@@ -36,11 +36,19 @@ pi -e ./packages/pi-suppress-providers
 
 ## Releases
 
-Packages publish independently from versioned tags:
+Each package's `package.json` holds the version that gets published, and it must match the tag:
 
 ```text
-pi-control-v0.3.3
-pi-suppress-providers-v0.1.6
+pi-control-v0.3.3            -> packages/pi-control/package.json
+pi-suppress-providers-v0.1.6 -> packages/pi-suppress-providers/package.json
 ```
 
-The release workflow runs the full monorepo checks and publishes the package named by the tag.
+Release from a clean `main` with the script:
+
+```sh
+scripts/release.sh pi-control 0.3.3
+```
+
+It bumps the manifest, runs that package's checks and tests, commits, and pushes both the commit and
+the `<package>-v<version>` tag. The tag push triggers `publish-<package>.yml`, which verifies the tag
+matches `package.json` and publishes with provenance; a mismatch fails before anything is published.

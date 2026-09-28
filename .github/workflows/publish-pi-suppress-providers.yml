@@ -15,6 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify tag matches package.json
+        working-directory: packages/pi-suppress-providers
+        run: |
+          tag="${GITHUB_REF_NAME#pi-suppress-providers-v}"
+          pkg="$(jq -r .version package.json)"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match packages/pi-suppress-providers/package.json (${pkg}); bump the version, commit, then re-tag"
+            exit 1
+          fi
+          echo "tag and package.json agree on ${pkg}"
+
       - uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
@@ -26,10 +37,6 @@ jobs:
       - name: Run tests
         working-directory: packages/pi-suppress-providers
         run: bun test
-
-      - name: Sync version from tag
-        working-directory: packages/pi-suppress-providers
-        run: npm pkg set version="${GITHUB_REF_NAME#pi-suppress-providers-v}"
 
       - uses: actions/setup-node@v6
         with:
