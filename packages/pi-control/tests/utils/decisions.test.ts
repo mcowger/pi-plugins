@@ -452,16 +452,31 @@ describe("classifySource", () => {
 		expect((error as DecisionsError).code).toBe("http");
 	});
 
-	it("maps aborts to timeout errors", async () => {
-		globalThis.fetch = (() =>
-			Promise.reject(
-				new DOMException("signal timed out", "TimeoutError"),
-			)) as unknown as typeof fetch;
-		const error = await classifySource(classifyInput(), testConfig()).catch(
-			(e) => e,
-		);
+	it("maps a request timeout to a timeout error", async () => {
+		// A fetch that only settles when the SDK's timeout aborts it.
+		globalThis.fetch = ((_url: string, init?: RequestInit) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () =>
+					reject(new DOMException("aborted", "AbortError")),
+				);
+			})) as unknown as typeof fetch;
+		const error = await classifySource(
+			classifyInput(),
+			testConfig({ timeoutMs: 5 }),
+		).catch((e) => e);
+		expect(error).toBeInstanceOf(DecisionsError);
 		expect((error as DecisionsError).code).toBe("timeout");
 		expect((error as DecisionsError).detail).toContain("timeout after");
+	});
+
+	it("posts to the configured endpoint, dropping the SDK path", async () => {
+		let requestedUrl = "";
+		globalThis.fetch = (async (url: string) => {
+			requestedUrl = url;
+			return okResponse(verdictBody());
+		}) as unknown as typeof fetch;
+		await classifySource(classifyInput(), testConfig());
+		expect(requestedUrl).toBe("https://example.invalid/decisions");
 	});
 
 	it("maps network failures to network errors", async () => {

@@ -12,11 +12,25 @@
  *             Always computed (even when Stage 1 decided) so logs carry
  *             rule-verdict-vs-score pairs for future tuning.
  *
- * Plain `fetch` — no SDK. All network/auth/malformed failures throw
- * DecisionsError for the caller to map via config.errorAction.
+ * Transport is the official `@typesafe-ai/sdk` client (see `postDecisions`).
+ * All network/auth/malformed failures throw DecisionsError for the caller to
+ * map via config.errorAction.
  */
 
 import { createHash } from "node:crypto";
+import {
+	APIConnectionError,
+	APIError,
+	APITimeoutError,
+	AuthenticationError,
+	type EntryType,
+	type Fetch,
+	PermissionDeniedError,
+	type Questions,
+	type SystemOneRequest,
+	TypeSafeClient,
+	TypeSafeError,
+} from "@typesafe-ai/sdk";
 import type { DecisionsConfig } from "../config.js";
 import type { EvalSource } from "./eval-detection.js";
 
@@ -59,7 +73,7 @@ export interface DecisionsUsage {
 	output_tokens: number;
 }
 
-interface DecisionsResponse {
+export interface DecisionsResponse {
 	id: string;
 	model: string;
 	provider: string;
@@ -84,6 +98,9 @@ export class DecisionsError extends Error {
 		this.detail = detail;
 	}
 }
+
+/** Terminal enforcement outcome produced by a Decisions classification. */
+export type Verdict = "allow" | "ask" | "deny";
 
 // ─── State and questions ──────────────────────────────────────────────────────
 
@@ -267,7 +284,7 @@ export interface AnswerBuckets {
 	read_scope: string;
 }
 
-function bucketNoul(
+export function bucketNoul(
 	p: number,
 	yesThreshold: number,
 	noThreshold: number,
@@ -277,16 +294,17 @@ function bucketNoul(
 	return "uncertain";
 }
 
-function bucketChoice(
+export function bucketChoice(
 	answer: DecisionsChoiceAnswer,
 	choiceConfidence: number,
 	riskyMassThreshold: number,
 	riskyLabels: Set<string>,
 ): string {
-	const entries = Object.entries(answer.probabilities);
+	const probabilities = answer.probabilities ?? {};
+	const entries = Object.entries(probabilities);
 	if (entries.length === 0) return answer.choice;
 	let top = answer.choice;
-	let topProb = answer.probabilities[answer.choice] ?? -1;
+	let topProb = probabilities[answer.choice] ?? -1;
 	let riskyMass = 0;
 	for (const [label, prob] of entries) {
 		if (prob > topProb) {
@@ -301,7 +319,7 @@ function bucketChoice(
 	return riskyMass >= riskyMassThreshold ? "uncertain" : top;
 }
 
-function asNoul(name: string, answer: DecisionsAnswer): number {
+export function asNoul(name: string, answer: DecisionsAnswer): number {
 	if (answer.type !== "noul" || typeof answer.noul !== "number") {
 		throw new DecisionsError(
 			`malformed answer for "${name}": expected a noul probability`,
@@ -311,7 +329,7 @@ function asNoul(name: string, answer: DecisionsAnswer): number {
 	return answer.noul;
 }
 
-function asChoice(
+export function asChoice(
 	name: string,
 	answer: DecisionsAnswer,
 ): DecisionsChoiceAnswer {
@@ -480,7 +498,7 @@ export interface BackstopResult {
 	contributions: Record<string, number>;
 }
 
-function round4(value: number): number {
+export function round4(value: number): number {
 	return Math.round(value * 10000) / 10000;
 }
 
@@ -559,6 +577,112 @@ function validateResponse(body: unknown): DecisionsResponse {
 	};
 }
 
+export interface PostDecisionsInput {
+	config: DecisionsConfig;
+	state: unknown;
+	questions: Record<string, DecisionsQuestion>;
+	sessionId: string;
+}
+
+export interface PostDecisionsResult {
+	response: DecisionsResponse;
+	latencyMs: number;
+}
+
+const SDK_PATH = "/v1/systemone";
+
+/**
+ * The TypeSafe SDK always POSTs to `{baseURL}/v1/systemone`. pi-controls'
+ * `decisions.url` is the exact endpoint (e.g. OpenRouter's decisions route), so
+ * point the SDK at the configured base and drop the path segment it appends.
+ */
+const configuredEndpointFetch: Fetch = (input, init) =>
+	globalThis.fetch(
+		input.endsWith(SDK_PATH) ? input.slice(0, -SDK_PATH.length) : input,
+		init,
+	);
+
+/** Map SDK failures onto the DecisionsError codes the caller switches on. */
+function mapSdkError(error: unknown, config: DecisionsConfig): DecisionsError {
+	if (error instanceof DecisionsError) return error;
+	if (
+		error instanceof AuthenticationError ||
+		error instanceof PermissionDeniedError
+	) {
+		return new DecisionsError(error.message, "auth");
+	}
+	// APITimeoutError extends APIConnectionError — check it first.
+	if (error instanceof APITimeoutError) {
+		return new DecisionsError(`timeout after ${config.timeoutMs}ms`, "timeout");
+	}
+	if (error instanceof APIConnectionError) {
+		return new DecisionsError(error.message || "connection error", "network");
+	}
+	if (error instanceof APIError) {
+		return new DecisionsError(
+			`HTTP ${error.status} from ${config.url}`,
+			"http",
+		);
+	}
+	if (error instanceof TypeSafeError) {
+		return new DecisionsError(error.message, "malformed");
+	}
+	return new DecisionsError(
+		error instanceof Error ? error.message : String(error),
+		"network",
+	);
+}
+
+/**
+ * Shared Decisions transport, now on the official `@typesafe-ai/sdk` client:
+ * the SDK owns auth, timeout, and error classes; pi-controls owns validation,
+ * verdict mapping, and logging. Eval classification and the `auto` action both
+ * go through here so transport fixes only need to land once.
+ */
+export async function postDecisions(
+	input: PostDecisionsInput,
+): Promise<PostDecisionsResult> {
+	const { config, state, questions, sessionId } = input;
+	const token = process.env[config.tokenEnv];
+	if (!token) {
+		throw new DecisionsError(
+			`auth token env var "${config.tokenEnv}" is not set`,
+			"auth",
+		);
+	}
+	const client = new TypeSafeClient({
+		apiKey: token,
+		baseURL: config.url,
+		defaultModel: config.model,
+		timeout: config.timeoutMs,
+		// pi-controls owns result logging; keep the SDK off the console.
+		logLevel: "off",
+		// Preserve the OpenRouter attribution header.
+		defaultHeaders: { "X-Title": "pi-controls" },
+		// One request per call; failures map through decisions.errorAction.
+		retry: { maxRetries: 0 },
+		fetch: configuredEndpointFetch,
+	});
+	// The SDK forwards extra request properties, so `session_id` rides along.
+	const request = {
+		state: state as unknown as EntryType,
+		questions: questions as Questions,
+		session_id: sessionId,
+	} as SystemOneRequest & { session_id: string };
+
+	const started = Date.now();
+	try {
+		const { data, requestId } = await client.systemOne(request).withResponse();
+		const payload = data as unknown as Record<string, unknown>;
+		return {
+			response: validateResponse({ ...payload, id: payload.id ?? requestId }),
+			latencyMs: Date.now() - started,
+		};
+	} catch (error) {
+		throw mapSdkError(error, config);
+	}
+}
+
 export interface ClassifyInput {
 	source: EvalSource;
 	/** Reconstructed stage argv (flag context). */
@@ -570,7 +694,7 @@ export interface ClassifyInput {
 }
 
 export interface SourceVerdict {
-	verdict: "allow" | "ask" | "deny";
+	verdict: Verdict;
 	buckets: AnswerBuckets;
 	stage1: Stage1Result;
 	stage2: BackstopResult;
@@ -588,13 +712,6 @@ export async function classifySource(
 	input: ClassifyInput,
 	config: DecisionsConfig,
 ): Promise<SourceVerdict> {
-	const token = process.env[config.tokenEnv];
-	if (!token) {
-		throw new DecisionsError(
-			`auth token env var "${config.tokenEnv}" is not set`,
-			"auth",
-		);
-	}
 	const state = buildState(
 		input.source,
 		input.stageCommand,
@@ -604,51 +721,12 @@ export async function classifySource(
 		config.maxSourceBytes,
 	);
 	const questions = buildQuestions();
-	const started = Date.now();
-	let res: Response;
-	try {
-		res = await fetch(config.url, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${token}`,
-				"Content-Type": "application/json",
-				"X-Title": "pi-controls",
-			},
-			body: JSON.stringify({
-				model: config.model,
-				state,
-				questions,
-				session_id: getSessionId(),
-			}),
-			signal: AbortSignal.timeout(config.timeoutMs),
-		});
-	} catch (error) {
-		const code =
-			error instanceof Error && error.name === "TimeoutError"
-				? "timeout"
-				: "network";
-		const reason =
-			code === "timeout"
-				? `timeout after ${config.timeoutMs}ms`
-				: error instanceof Error
-					? error.message
-					: String(error);
-		throw new DecisionsError(reason, code);
-	}
-	if (!res.ok) {
-		throw new DecisionsError(
-			`HTTP ${res.status} from ${config.url}`,
-			res.status === 401 || res.status === 403 ? "auth" : "http",
-		);
-	}
-	let body: unknown;
-	try {
-		body = await res.json();
-	} catch {
-		throw new DecisionsError("response is not valid JSON", "malformed");
-	}
-	const latencyMs = Date.now() - started;
-	const response = validateResponse(body);
+	const { response, latencyMs } = await postDecisions({
+		config,
+		state,
+		questions,
+		sessionId: getSessionId(),
+	});
 	const { buckets, probs } = bucketAnswers(response.answers, config);
 	const stage1 = applyStage1(buckets);
 	// The backstop is always computed so logs carry rule-vs-score pairs for tuning.
@@ -679,32 +757,48 @@ export async function classifySource(
 // ─── Session verdict cache ────────────────────────────────────────────────────
 
 const MAX_CACHE_ENTRIES = 200;
-const verdictCache = new Map<string, "allow" | "ask" | "deny">();
+
+export interface VerdictCache {
+	get(key: string): Verdict | undefined;
+	set(key: string, verdict: Verdict): void;
+	clear(): void;
+}
+
+/** FIFO verdict cache shared by eval classification and the `auto` action. */
+export function createVerdictCache(
+	maxEntries = MAX_CACHE_ENTRIES,
+): VerdictCache {
+	const store = new Map<string, Verdict>();
+	return {
+		get: (key) => store.get(key),
+		set: (key, verdict) => {
+			if (!store.has(key) && store.size >= maxEntries) {
+				const oldest = store.keys().next();
+				if (!oldest.done) store.delete(oldest.value);
+			}
+			store.set(key, verdict);
+		},
+		clear: () => store.clear(),
+	};
+}
+
+const evalVerdictCache = createVerdictCache();
 
 export function evalCacheKey(language: string, source: string): string {
 	return `sha256:${createHash("sha256").update(`${language}\0${source}`, "utf8").digest("hex")}`;
 }
 
-export function getCachedVerdict(
-	key: string,
-): "allow" | "ask" | "deny" | undefined {
-	return verdictCache.get(key);
+export function getCachedVerdict(key: string): Verdict | undefined {
+	return evalVerdictCache.get(key);
 }
 
-export function setCachedVerdict(
-	key: string,
-	verdict: "allow" | "ask" | "deny",
-): void {
-	if (!verdictCache.has(key) && verdictCache.size >= MAX_CACHE_ENTRIES) {
-		const oldest = verdictCache.keys().next();
-		if (!oldest.done) verdictCache.delete(oldest.value);
-	}
-	verdictCache.set(key, verdict);
+export function setCachedVerdict(key: string, verdict: Verdict): void {
+	evalVerdictCache.set(key, verdict);
 }
 
 /** Exported for tests. */
 export function clearEvalCache(): void {
-	verdictCache.clear();
+	evalVerdictCache.clear();
 }
 
 // ─── Rationale for user-facing messages ───────────────────────────────────────
