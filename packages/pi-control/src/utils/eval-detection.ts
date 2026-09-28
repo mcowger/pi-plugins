@@ -64,8 +64,117 @@ const PYTHON_SAFE_OPTIONS = new Set([
 	"--no-site",
 	"--no-user-site",
 ]);
-const JS_SAFE_OPTIONS = new Set(["-v", "--version", "-h", "--help"]);
+const JS_SAFE_OPTIONS = new Set([
+	"-v",
+	"--version",
+	"-h",
+	"--help",
+	// Non-eval runner / runtime booleans. Bare invocations with only these
+	// flags carry no inline source (e.g. `node --test` launches the test
+	// runner); anything else unknown stays fail-closed (see below).
+	"--check",
+	"--interactive",
+	"--test",
+	"--test-only",
+	"--test-force-exit",
+	"--test-update-snapshots",
+	"--experimental-test-coverage",
+	"--experimental-test-module-mocks",
+	"--watch",
+	"--watch-preserve-output",
+	"--silent",
+	"--hot",
+	"--smol",
+	"-i",
+	"--if-present",
+	"--no-install",
+	"--prefer-offline",
+	"--prefer-latest",
+	"--no-clear-screen",
+	"--workspaces",
+	"--parallel",
+	"--sequential",
+	"--no-exit-on-error",
+	"--no-orphans",
+	"--no-env-file",
+	"--no-macros",
+	"--jsx-side-effects",
+	"--ignore-dce-annotations",
+	"--no-warnings",
+	"--no-deprecation",
+	"--expose-gc",
+]);
+/** Runtime flags that consume a separate `value` argument (`--cwd <dir>`). */
+const JS_VALUE_OPTIONS = new Set([
+	"--cwd",
+	"-c",
+	"--config",
+	"--env-file",
+	"--env-file-if-exists",
+	"-r",
+	"--preload",
+	"--require",
+	"--import",
+	"--loader",
+	"--experimental-loader",
+	"-C",
+	"--conditions",
+	"--inspect",
+	"--inspect-wait",
+	"--inspect-brk",
+	"--title",
+	"--port",
+	"-t",
+	"--test-name-pattern",
+	"--test-reporter",
+	"--test-reporter-destination",
+	"--test-concurrency",
+	"--cpu-prof-dir",
+	"--cpu-prof-name",
+	"--heap-prof-dir",
+	"--heap-prof-name",
+	"--redirect-warnings",
+	"--disable-warning",
+	"--diagnostic-dir",
+	"--tsconfig-override",
+	"-d",
+	"--define",
+	"--drop",
+	"--feature",
+	"-l",
+	"--jsx-factory",
+	"--jsx-fragment",
+	"--jsx-import-source",
+	"--jsx-runtime",
+	"--shell",
+	"-F",
+	"--filter",
+	"--elide-lines",
+	"--watch-kill-signal",
+	"--install",
+	"--run",
+]);
 const SHELL_SAFE_OPTIONS = new Set(["-e", "-f", "-n", "-u", "-v", "-x"]);
+const TS_SAFE_OPTIONS = new Set([
+	"-v",
+	"--version",
+	"-h",
+	"--help",
+	"--watch",
+	"--no-cache",
+]);
+/** tsx/ts-node flags that consume a separate `value` argument. */
+const TS_VALUE_OPTIONS = new Set([
+	"--tsconfig",
+	"--env-file",
+	"--import",
+	"--loader",
+	"--experimental-loader",
+	"--inspect",
+	"--inspect-wait",
+	"--inspect-brk",
+	"--port",
+]);
 const DENO_EVAL_OPTIONS = new Set(["-p", "--print"]);
 
 function executableName(argument: CommandArgument): string | null {
@@ -257,6 +366,12 @@ function extractJavaScriptRuntime(
 ): EvalDetection {
 	const language: EvalLanguage =
 		interpreter === "bun" ? "typescript" : "javascript";
+	// Unknown flags are remembered, not reported immediately: a later
+	// subcommand / script file (`bun --cwd <dir> test`,
+	// `node --env-file=.env server.js`) proves the invocation carries no
+	// inline source. Only a bare invocation with unknown flags stays
+	// unrecoverable (fail-closed: the flag could hide eval semantics).
+	let sawUnknown = false;
 	for (let index = 1; index < args.length; index++) {
 		const argument = args[index];
 		if (!argument.static) {
@@ -286,12 +401,31 @@ function extractJavaScriptRuntime(
 			return stdinResult(stage, language, interpreter);
 		}
 		if (!argument.value.startsWith("-") || argument.value === "--") {
-			// Script file — no inline source, left to path-based policy.
+			// Subcommand (`bun test`) or script file — no inline source,
+			// left to path-based policy.
 			return none();
 		}
-		if (!JS_SAFE_OPTIONS.has(argument.value)) {
-			return unrecoverable(`${interpreter} uses unsupported execution options`);
+		// `--flag=value` (non-eval; eval forms handled above) is
+		// self-contained — e.g. `--cwd=<dir>`, `--env-file=.env`.
+		if (argument.value.includes("=")) {
+			continue;
 		}
+		if (JS_SAFE_OPTIONS.has(argument.value)) {
+			continue;
+		}
+		if (JS_VALUE_OPTIONS.has(argument.value)) {
+			// Consume a separate `value` argument (`--cwd <dir>`) so it is
+			// not mistaken for a script file or eval flag.
+			const next = args[index + 1];
+			if (next && next.static && !next.value.startsWith("-")) {
+				index++;
+			}
+			continue;
+		}
+		sawUnknown = true;
+	}
+	if (sawUnknown) {
+		return unrecoverable(`${interpreter} uses unsupported execution options`);
 	}
 	// Bare `node` / `bun`: code can only arrive via stdin redirect.
 	const sources = stdinSources(stage, language, interpreter);
@@ -351,6 +485,10 @@ function extractTypeScriptRunner(
 	stage: CommandStage,
 	interpreter: "tsx" | "ts-node",
 ): EvalDetection {
+	// Same deferral as the node/bun extractor: unknown flags are remembered,
+	// not reported immediately, so `tsx --tsconfig <file> script.ts` skips via
+	// its script file instead of prompting as unrecoverable.
+	let sawUnknown = false;
 	for (let index = 1; index < args.length; index++) {
 		const argument = args[index];
 		if (!argument.static) {
@@ -365,8 +503,24 @@ function extractTypeScriptRunner(
 			// Script file — no inline source, left to path-based policy.
 			return none();
 		}
-		// tsx/ts-node accept many passthrough flags (--tsconfig, …). Any flag
-		// before the code is treated as unrecoverable rather than assumed safe.
+		// tsx/ts-node accept many passthrough flags (--tsconfig, …) plus
+		// `--flag=value` forms; none of them is inline source by itself.
+		if (argument.value.includes("=")) {
+			continue;
+		}
+		if (TS_SAFE_OPTIONS.has(argument.value)) {
+			continue;
+		}
+		if (TS_VALUE_OPTIONS.has(argument.value)) {
+			const next = args[index + 1];
+			if (next && next.static && !next.value.startsWith("-")) {
+				index++;
+			}
+			continue;
+		}
+		sawUnknown = true;
+	}
+	if (sawUnknown) {
 		return unrecoverable(`${interpreter} uses unsupported execution options`);
 	}
 	// Bare runner: code can only arrive via stdin redirect.

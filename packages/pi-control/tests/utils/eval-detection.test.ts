@@ -122,6 +122,83 @@ describe("detectEvalSources", () => {
 		expect(sources[0].language).toBe("typescript");
 	});
 
+	it("skips bun/node runner invocations with global flags", () => {
+		// Reported false positive: `bun --cwd <dir> test` is a test-runner
+		// invocation, not inline eval.
+		expect(
+			detectEvalSources(
+				stage(
+					[arg("bun"), arg("--cwd"), arg("packages/pi-microgpt"), arg("test")],
+					[],
+				),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(
+			detectEvalSources(
+				stage([arg("bun"), arg("--cwd=packages/pi-microgpt"), arg("test")], []),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(
+			detectEvalSources(
+				stage([arg("bun"), arg("--env-file=.env"), arg("test")], []),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(
+			detectEvalSources(stage([arg("bun"), arg("run"), arg("lint")], [])),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(
+			detectEvalSources(
+				stage([arg("node"), arg("--env-file=.env"), arg("server.js")], []),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(detectEvalSources(stage([arg("node"), arg("--test")], []))).toEqual({
+			sources: [],
+			unavailable: [],
+		});
+		// Unknown flags before a script file still skip (the script proves
+		// non-eval); bare invocations with unknown flags stay unrecoverable.
+		expect(
+			detectEvalSources(
+				stage([arg("bun"), arg("--unknown-flag"), arg("run"), arg("x")], []),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(
+			detectEvalSources(stage([arg("bun"), arg("--unknown-flag")], []))
+				.unavailable,
+		).toEqual(["bun uses unsupported execution options"]);
+	});
+
+	it("still detects eval flags after runner flags", () => {
+		const sources = expectSources(
+			detectEvalSources(
+				stage(
+					[arg("bun"), arg("--cwd"), arg("packages/x"), arg("-e"), arg("1+1")],
+					[],
+				),
+			),
+		);
+		expect(sources[0]).toMatchObject({
+			language: "typescript",
+			source: "1+1",
+			origin: "inline",
+		});
+	});
+
+	it("skips tsx script files with runner flags, keeps bare unknown unrecoverable", () => {
+		expect(
+			detectEvalSources(
+				stage(
+					[arg("tsx"), arg("--tsconfig"), arg("custom.json"), arg("script.ts")],
+					[],
+				),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+		expect(
+			detectEvalSources(stage([arg("tsx"), arg("--unknown-flag")], []))
+				.unavailable,
+		).toHaveLength(1);
+	});
+
 	it("detects deno eval, skips other subcommands", () => {
 		const sources = expectSources(
 			detectEvalSources(stage([arg("deno"), arg("eval"), arg("1+1")], [])),
