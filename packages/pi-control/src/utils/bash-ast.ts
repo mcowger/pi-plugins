@@ -44,6 +44,8 @@ export interface CommandStage {
 	embeddedSources: EmbeddedSource[];
 	/** True when this stage receives piped stdin (non-first stage in a `|` pipeline). */
 	pipedInput: boolean;
+	/** True when this stage's stdout is piped to the next stage (non-last stage in a `|` pipeline). */
+	pipedOutput: boolean;
 }
 
 // ─── Module state ────────────────────────────────────────────────────────────
@@ -312,6 +314,7 @@ function buildStage(
 	node: SyntaxNode,
 	inheritedRedirects: SyntaxNode[],
 	pipedInput: boolean,
+	pipedOutput: boolean,
 ): CommandStage {
 	const ownRedirects = redirectNodes(node);
 	const redirects = [...ownRedirects, ...inheritedRedirects];
@@ -345,6 +348,7 @@ function buildStage(
 		pathArgs,
 		embeddedSources,
 		pipedInput,
+		pipedOutput,
 	};
 }
 
@@ -353,17 +357,22 @@ function collectStages(
 	stages: CommandStage[],
 	inheritedRedirects: SyntaxNode[] = [],
 	pipedInput = false,
+	pipedOutput = false,
 ): void {
 	if (node.type === "pipeline") {
 		const children = namedChildren(node);
 		for (const [index, child] of children.entries()) {
 			// First stage reads from the original stdin; later stages read
-			// from the previous stage's stdout.
+			// from the previous stage's stdout. Likewise, every stage but
+			// the last pipes its stdout to the next stage.
+			const isFirst = index === 0;
+			const isLast = index === children.length - 1;
 			collectStages(
 				child,
 				stages,
 				inheritedRedirects,
-				index === 0 ? pipedInput : true,
+				isFirst ? pipedInput : true,
+				isLast ? pipedOutput : true,
 			);
 		}
 		return;
@@ -372,12 +381,12 @@ function collectStages(
 	if (node.type === "redirected_statement") {
 		const body = node.childForFieldName("body");
 		const redirects = redirectNodes(node);
-		if (body) collectStages(body, stages, redirects, pipedInput);
+		if (body) collectStages(body, stages, redirects, pipedInput, pipedOutput);
 		return;
 	}
 
 	if (node.type === "command") {
-		stages.push(buildStage(node, inheritedRedirects, pipedInput));
+		stages.push(buildStage(node, inheritedRedirects, pipedInput, pipedOutput));
 		// Commands nested in substitutions execute as separate stages.
 		for (const child of namedChildren(node)) {
 			if (
@@ -391,7 +400,7 @@ function collectStages(
 	}
 
 	for (const child of namedChildren(node)) {
-		collectStages(child, stages, inheritedRedirects, pipedInput);
+		collectStages(child, stages, inheritedRedirects, pipedInput, pipedOutput);
 	}
 }
 
@@ -428,6 +437,7 @@ function regexFallback(command: string): CommandStage[] {
 			pathArgs,
 			embeddedSources: [],
 			pipedInput: false,
+			pipedOutput: false,
 		},
 	];
 }

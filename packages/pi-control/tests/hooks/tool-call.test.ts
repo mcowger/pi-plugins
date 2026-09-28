@@ -311,6 +311,88 @@ describe("piped bash nudge suppression", () => {
 	});
 });
 
+describe("piped cat nudge suppression", () => {
+	const catNudgeConfig: ControlsResolvedConfig = {
+		policies: {
+			nudged: {
+				defaultAction: "allow",
+				rules: [
+					{
+						action: "nudge",
+						tool: "bash",
+						pattern: "cat *",
+						message: "Prefer the read tool over cat",
+					},
+				],
+			},
+		},
+		locations: { "/tmp": "nudged" },
+		defaultPolicy: null,
+		cycleKey: "ctrl+shift+m",
+		agentTimeout: null,
+		nudgeTimeout: null,
+		pathProtection: null,
+		decisions: null,
+	};
+
+	it("nudges when cat is called directly", async () => {
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent("cat package.json", "pipe-cat-1"),
+			makeCtx("/tmp"),
+			catNudgeConfig,
+		);
+		expect(pendingNudges.get("pipe-cat-1")).toBe(
+			"Prefer the read tool over cat",
+		);
+	});
+
+	it("does not nudge when cat feeds a pipeline", async () => {
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent(
+				'cat package.json | python3 -c "import json,sys"',
+				"pipe-cat-2",
+			),
+			makeCtx("/tmp"),
+			catNudgeConfig,
+		);
+		expect(pendingNudges.has("pipe-cat-2")).toBe(false);
+	});
+
+	it("does not nudge when head feeds a pipeline", async () => {
+		const headNudgeConfig: ControlsResolvedConfig = {
+			policies: {
+				nudged: {
+					defaultAction: "allow",
+					rules: [
+						{
+							action: "nudge",
+							tool: "bash",
+							pattern: "head *",
+							message: "Prefer the read tool over head",
+						},
+					],
+				},
+			},
+			locations: { "/tmp": "nudged" },
+			defaultPolicy: null,
+			cycleKey: "ctrl+shift+m",
+			agentTimeout: null,
+			nudgeTimeout: null,
+			pathProtection: null,
+			decisions: null,
+		};
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent("head -n 5 /tmp/foo.txt | grep bar", "pipe-cat-3"),
+			makeCtx("/tmp"),
+			headNudgeConfig,
+		);
+		expect(pendingNudges.has("pipe-cat-3")).toBe(false);
+	});
+});
+
 describe("agentTimeout escalation (deny → ask)", () => {
 	// All calls land on /home/user which has no location → defaultPolicy=locked (deny all).
 	const timeoutConfig: ControlsResolvedConfig = {

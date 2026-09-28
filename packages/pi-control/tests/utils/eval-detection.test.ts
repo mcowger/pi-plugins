@@ -20,6 +20,7 @@ function stage(
 		pathArgs: [],
 		embeddedSources,
 		pipedInput: false,
+		pipedOutput: false,
 	};
 }
 

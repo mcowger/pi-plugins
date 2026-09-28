@@ -55,6 +55,37 @@ describe("parseCommand", () => {
 		expect(stages[2].pipedInput).toBe(true);
 	});
 
+	it("marks non-last pipeline stages as piped output", async () => {
+		const stages = await parseCommand("cat file.txt | grep foo");
+		expect(stages[0].pipedOutput).toBe(true);
+		expect(stages[1].pipedOutput).toBe(false);
+	});
+
+	it("marks all stages but the last as piped output in longer pipelines", async () => {
+		const stages = await parseCommand(
+			'bun --cwd packages/pi-control test 2>&1 | grep -E "(fail)" | head',
+		);
+		expect(stages).toHaveLength(3);
+		expect(stages[0].pipedOutput).toBe(true);
+		expect(stages[1].pipedOutput).toBe(true);
+		expect(stages[2].pipedOutput).toBe(false);
+	});
+
+	it("does not mark && separated commands as piped output", async () => {
+		const stages = await parseCommand("git add . && git commit -m 'msg'");
+		for (const stage of stages) {
+			expect(stage.pipedOutput).toBe(false);
+		}
+	});
+
+	it("marks only the pipe source as piped output in mixed && and | commands", async () => {
+		const stages = await parseCommand("a && b | c");
+		expect(stages).toHaveLength(3);
+		expect(stages[0].pipedOutput).toBe(false);
+		expect(stages[1].pipedOutput).toBe(true);
+		expect(stages[2].pipedOutput).toBe(false);
+	});
+
 	it("parses && separated commands", async () => {
 		const stages = await parseCommand("git add . && git commit -m 'msg'");
 		expect(stages.length).toBeGreaterThanOrEqual(2);
