@@ -18,6 +18,7 @@ import {
 } from "../utils/matching.js";
 import { canonicalizePath } from "../utils/path.js";
 import { parseCommand } from "../utils/bash-ast.js";
+import { promptSelect } from "../utils/forwarding.js";
 import { logDecision } from "../utils/logger.js";
 import { minimatch } from "minimatch";
 import { basename } from "node:path";
@@ -541,8 +542,15 @@ async function executeAction(
 				choices.push("Allow for Project", "Allow Globally");
 			}
 			choices.push("Deny");
-			const choice = await ctx.ui.select(title, choices);
+			const prompt = await promptSelect(ctx, title, choices);
+			const choice = prompt.choice;
 			if (!choice || choice === "Deny") {
+				if (prompt.unavailableReason) {
+					return {
+						block: true,
+						reason: `[pi-controls] Approval is required for ${toolName}${command ? ` (${command.slice(0, 80)})` : ""}, but no interactive UI could answer the prompt: ${prompt.unavailableReason}. The call was blocked. Do not retry; ask the user to run it interactively.`,
+					};
+				}
 				return {
 					block: true,
 					reason: `[pi-controls] Blocked by user: ${toolName}${command ? ` (${command.slice(0, 80)})` : ""}`,
@@ -563,7 +571,8 @@ async function executeAction(
 					const scope = choice === "Allow for Project" ? "project" : "global";
 					let policyName = approvalPersistence.policyNames[0];
 					if (approvalPersistence.policyNames.length > 1) {
-						const selected = await ctx.ui.select(
+						const { choice: selected } = await promptSelect(
+							ctx,
 							"[pi-controls] Choose policy for the saved allow rule",
 							approvalPersistence.policyNames,
 						);

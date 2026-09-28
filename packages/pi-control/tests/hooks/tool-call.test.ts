@@ -13,6 +13,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdir, readFile } from "node:fs/promises";
 import { initBashParser } from "../../src/utils/bash-ast.js";
+import { ForwardingManager } from "../../src/utils/forwarding.js";
+import {
+	defaultForwardingDir,
+	forwardingLocation,
+	listJsonFiles,
+} from "../../src/utils/forwarding-io.js";
+import {
+	getServingSessionRegistry,
+	getSubagentSessionRegistry,
+} from "../../src/utils/subagent.js";
 import {
 	handleToolCall,
 	pendingNudges,
@@ -1205,5 +1215,111 @@ describe("tool-call handler — symlink location resolution", () => {
 			symlinkConfig(project, ssh),
 		);
 		expect(result).toBeUndefined();
+	});
+});
+
+describe("forwarded asks from subagent children", () => {
+	const askConfig: ControlsResolvedConfig = {
+		policies: {
+			confirm: {
+				defaultAction: "allow",
+				rules: [{ action: "ask", tool: "write" }],
+			},
+		},
+		locations: { "/tmp": "confirm" },
+		defaultPolicy: null,
+		agentTimeout: null,
+		nudgeTimeout: null,
+		pathProtection: null,
+		decisions: null,
+		cycleKey: "ctrl+shift+m",
+	};
+
+	it("asks the parent UI instead of the child's own dialog", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-controls-hook-fwd-"));
+		const previousDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = dir;
+		const childId = "hook-forward-child";
+		const parentId = "hook-forward-parent";
+		getSubagentSessionRegistry().register(childId, {
+			parentSessionId: parentId,
+		});
+		getServingSessionRegistry().markServing(parentId);
+		sessionAllows.clear();
+		try {
+			const childSelect = mock(async () => "Deny");
+			const childCtx = {
+				cwd: "/tmp",
+				hasUI: false,
+				sessionManager: {
+					getSessionId: () => childId,
+					getSessionDir: () => "/tmp/child-session",
+				},
+				ui: { notify: mock(() => {}), select: childSelect },
+			} as unknown as ExtensionContext;
+
+			const pending = handleToolCall(
+				toolEvent("write", "fwd-1", { file_path: "/tmp/foo.ts" }),
+				childCtx,
+				askConfig,
+			);
+
+			const location = forwardingLocation(defaultForwardingDir(), parentId);
+			for (
+				let i = 0;
+				i < 200 && listJsonFiles(location.requestsDir).length === 0;
+				i++
+			) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			}
+			expect(listJsonFiles(location.requestsDir).length).toBe(1);
+
+			const parentCtx = {
+				cwd: "/tmp",
+				hasUI: true,
+				sessionManager: {
+					getSessionId: () => parentId,
+					getSessionDir: () => "/tmp/parent-session",
+				},
+				ui: {
+					notify: mock(() => {}),
+					select: mock(async () => "Allow"),
+				},
+			} as unknown as ExtensionContext;
+			await new ForwardingManager({
+				forwardingDir: defaultForwardingDir(),
+			}).processInbox(parentCtx);
+
+			expect(await pending).toBeUndefined();
+			expect(childSelect).not.toHaveBeenCalled();
+		} finally {
+			getSubagentSessionRegistry().unregister(childId);
+			getServingSessionRegistry().clearServing(parentId);
+			if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousDir;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports an unavailable approval rather than a user denial", async () => {
+		sessionAllows.clear();
+		const ctx = {
+			cwd: "/tmp",
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => "unregistered-headless-child",
+				getSessionDir: () => "/tmp/headless-session",
+			},
+			ui: { notify: mock(() => {}), select: mock(async () => "Allow") },
+		} as unknown as ExtensionContext;
+
+		const result = await handleToolCall(
+			toolEvent("write", "fwd-2", { file_path: "/tmp/foo.ts" }),
+			ctx,
+			askConfig,
+		);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain("no interactive UI");
+		expect(result?.reason).not.toContain("Blocked by user");
 	});
 });

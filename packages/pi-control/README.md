@@ -19,6 +19,7 @@ When the agent tries to run a bash command, read a file, write to a path, or cal
   - [Agent Timeout](#agent-timeout)
   - [Nudge Timeout](#nudge-timeout)
   - [Locations](#locations)
+- [Subagent Ask Forwarding](#subagent-ask-forwarding)
 - [Rule Matching and Specificity](#rule-matching-and-specificity)
 - [Multi-Target Resolution](#multi-target-resolution)
 - [Bash Command Parsing](#bash-command-parsing)
@@ -375,6 +376,21 @@ The special key `"$cwd"` resolves dynamically to whatever directory pi was start
   "defaultPolicy": "relaxed"
 }
 ```
+
+---
+
+## Subagent Ask Forwarding
+
+When a subagent child session evaluates a tool call to `ask`, there is no UI in the child to answer it. pi-control forwards the prompt to the parent session instead: the child writes the ask into the parent's inbox, and the parent — the session with the terminal — shows the same Allow / Deny dialog, with the same choices the child would have offered. The chosen label travels back to the child, which applies it exactly as if the user had answered locally (including "Allow for session" and saved approval rules).
+
+Forwarding is automatic. Nothing needs to be configured, and no other package needs to be installed:
+
+- **In-process children** (e.g. `@gotgenes/pi-subagents`) are detected from the `subagents:child:session-created` / `subagents:child:disposed` lifecycle events the spawner publishes, and the parent is resolved from that registration.
+- **Out-of-process children** are detected from `PI_SUBAGENT_PARENT_SESSION` (or a known third-party subagent marker), and the parent is resolved from that variable.
+
+A child only waits while the parent is actually draining its inbox. If the parent has exited, stopped polling, or names a different session, the child gives up after a short grace window and the tool call is denied — never silently allowed. A child that has a UI of its own falls back to a local dialog when forwarding is unavailable.
+
+Forwarded-ask state lives under `<agentDir>/extensions/pi-controls-forwarding/`. It is drained and cleaned up per session; only request/response records for in-flight asks are ever present.
 
 ---
 

@@ -64,6 +64,9 @@ src/
     matching.ts      # Specificity scoring, rule matching, mostRestrictive()
     path.ts          # ~ expansion and path normalization
     logger.ts        # Append-only JSONL log at <agentDir>/extensions/pi-controls.log
+    subagent.ts      # Process-global child/serving registries, subagent detection, forwarding-target resolution
+    forwarding-io.ts # Forwarded-ask directories, atomic JSON IO, serving heartbeat store
+    forwarding.ts    # ForwardingManager (parent poller), forwardAsk (child), promptSelect dispatcher
     safe-commands.ts # SAFE_BASH_PATTERNS array (the $safe-bash preset source of truth)
 tests/               # Mirrors src/ structure; one test file per utility module
 examples/

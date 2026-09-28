@@ -7,8 +7,13 @@ import { createConfigLoader } from "./config.js";
 import { handleToolCall, pendingNudges } from "./hooks/tool-call.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { initBashParser } from "./utils/bash-ast.js";
+import { ForwardingManager } from "./utils/forwarding.js";
 import { logStartup } from "./utils/logger.js";
 import { matchRule } from "./utils/matching.js";
+import {
+	getSubagentSessionRegistry,
+	subscribeSubagentLifecycle,
+} from "./utils/subagent.js";
 
 export type ControlsMode = "enforce" | "ignore" | "inform";
 
@@ -29,6 +34,15 @@ const MODE_NOTIFY_TYPE: Record<ControlsMode, "info" | "warning" | "error"> = {
 export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	const loader = createConfigLoader();
 	let mode: ControlsMode = "enforce";
+
+	// Forwarded `ask` prompts: register every in-process subagent child the
+	// moment its spawner announces it, and serve this session's inbox while it
+	// has a UI to answer with.
+	const forwardingManager = new ForwardingManager();
+	const unsubscribeSubagentLifecycle = subscribeSubagentLifecycle(
+		pi.events,
+		getSubagentSessionRegistry(),
+	);
 
 	function setWidgetForMode(ctx: {
 		ui: { setWidget: (id: string, lines: string[]) => void };
@@ -119,6 +133,9 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		// Restore widget state if mode was changed before a reload.
 		setWidgetForMode(ctx);
 
+		// Start draining this session's forwarded-ask inbox when it has a UI.
+		forwardingManager.start(ctx);
+
 		try {
 			await loader.load();
 			const config = loader.getConfig();
@@ -141,6 +158,8 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	});
 
 	pi.on("before_agent_start", async (_event, ctx) => {
+		// Re-arm forwarding against the live context before any tool call.
+		forwardingManager.start(ctx);
 		if (mode === "ignore") return;
 		const config = loader.getConfig();
 
@@ -201,5 +220,10 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 				...existing,
 			],
 		};
+	});
+
+	pi.on("session_shutdown", () => {
+		forwardingManager.stop();
+		unsubscribeSubagentLifecycle();
 	});
 }
