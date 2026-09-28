@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolvePolicy } from "../../src/utils/location.js";
 import type { ControlsResolvedConfig, Policy } from "../../src/config.js";
 
@@ -110,6 +113,58 @@ describe("resolvePolicy — cwd special location key", () => {
 		};
 		expect(resolvePolicy(`${cwdPath}/src/index.ts`, cwdPath, cfg)?.name).toBe(
 			"locked",
+		);
+	});
+});
+
+const symlinkRoots: string[] = [];
+
+function makeSymlinkRoot(): string {
+	const root = mkdtempSync(join(tmpdir(), "pi-controls-location-"));
+	symlinkRoots.push(root);
+	return root;
+}
+
+afterAll(() => {
+	for (const root of symlinkRoots)
+		rmSync(root, { recursive: true, force: true });
+});
+
+describe("resolvePolicy — symlink resolution", () => {
+	it("applies the protected location policy when a link points into it", () => {
+		const root = makeSymlinkRoot();
+		const project = join(root, "project");
+		const ssh = join(root, ".ssh");
+		mkdirSync(project);
+		mkdirSync(ssh);
+		symlinkSync(ssh, join(project, "ssh"));
+
+		const cfg: ControlsResolvedConfig = {
+			...config,
+			locations: { [project]: "relaxed", [ssh]: "strict" },
+			defaultPolicy: "strict",
+		};
+
+		expect(
+			resolvePolicy(join(project, "ssh", "id_rsa"), project, cfg)?.name,
+		).toBe("strict");
+	});
+
+	it("resolves a symlinked location key to its real target", () => {
+		const root = makeSymlinkRoot();
+		const real = join(root, "real-project");
+		mkdirSync(real);
+		const link = join(root, "linked-project");
+		symlinkSync(real, link);
+
+		const cfg: ControlsResolvedConfig = {
+			...config,
+			locations: { [link]: "strict" },
+			defaultPolicy: "relaxed",
+		};
+
+		expect(resolvePolicy(join(real, "src", "index.ts"), root, cfg)?.name).toBe(
+			"strict",
 		);
 	});
 });

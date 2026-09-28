@@ -355,6 +355,8 @@ A **location** maps a filesystem path to a policy name. The most specific (longe
 
 A tool call targeting `/home/user/work/secret-project/src/main.ts` matches all three locations, but `/home/user/work/secret-project` is longest, so `strict` applies.
 
+Matching is symlink-aware: the target path and each configured location are resolved with `realpath` before comparison. A symlink inside a permitted directory that points into a protected one (for example `./ssh -> ~/.ssh`) resolves to the protected location, so it cannot be used to inherit the permitted directory's policy. Targets that do not exist yet — such as a file about to be written — resolve up to their longest existing parent.
+
 The special key `"$cwd"` resolves dynamically to whatever directory pi was started from:
 
 ```jsonc

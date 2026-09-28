@@ -16,7 +16,7 @@ import {
 	matchRuleWithDetails,
 	mostRestrictive,
 } from "../utils/matching.js";
-import { normalizePath } from "../utils/path.js";
+import { canonicalizePath } from "../utils/path.js";
 import { parseCommand } from "../utils/bash-ast.js";
 import { logDecision } from "../utils/logger.js";
 import { minimatch } from "minimatch";
@@ -280,10 +280,10 @@ function getTargetPaths(event: ToolCallEvent, cwd: string): string[] {
 	const input = event.input as Record<string, unknown>;
 	for (const key of ["path", "file_path"]) {
 		if (typeof input[key] === "string") {
-			return [normalizePath(input[key] as string, cwd)];
+			return [canonicalizePath(input[key] as string, cwd)];
 		}
 	}
-	return [cwd];
+	return [canonicalizePath(cwd, cwd)];
 }
 
 function buildContextSuffix(
@@ -434,7 +434,7 @@ function checkPathProtection(
 				token.startsWith("~") ||
 				token.startsWith(".")
 			) {
-				pathsToCheck.push(normalizePath(token, cwd));
+				pathsToCheck.push(canonicalizePath(token, cwd));
 			}
 		}
 	} else {
@@ -718,7 +718,7 @@ export async function handleToolCall(
 			const stageTargets = [
 				...new Set(
 					[...stage.redirectFiles, ...stage.pathArgs].map((path) =>
-						normalizePath(path, cwd),
+						canonicalizePath(path, cwd),
 					),
 				),
 			];

@@ -5,9 +5,10 @@ import {
 	beforeAll,
 	beforeEach,
 	afterEach,
+	afterAll,
 	mock,
 } from "bun:test"; // mock kept for ctx stubs
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdir, readFile } from "node:fs/promises";
@@ -1116,5 +1117,93 @@ describe("eval classification via Decisions API", () => {
 			),
 		).toBeUndefined();
 		expect(fetchCalls).toBe(1);
+	});
+});
+
+describe("tool-call handler — symlink location resolution", () => {
+	const roots: string[] = [];
+
+	function makeRoot(): string {
+		const root = mkdtempSync(join(tmpdir(), "pi-controls-symlink-"));
+		roots.push(root);
+		return root;
+	}
+
+	afterAll(() => {
+		for (const root of roots) rmSync(root, { recursive: true, force: true });
+	});
+
+	// project → open (allow), .ssh → locked (deny). The link lives inside the
+	// open project but resolves into the locked location.
+	function symlinkConfig(project: string, ssh: string): ControlsResolvedConfig {
+		return {
+			policies: {
+				open: { defaultAction: "allow", rules: [] },
+				locked: { defaultAction: "deny", rules: [] },
+			},
+			locations: { [project]: "open", [ssh]: "locked" },
+			defaultPolicy: "locked",
+			cycleKey: "ctrl+shift+m",
+			agentTimeout: null,
+			nudgeTimeout: null,
+			pathProtection: null,
+			decisions: null,
+		};
+	}
+
+	function setupSymlink(): {
+		root: string;
+		project: string;
+		ssh: string;
+	} {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const ssh = join(root, ".ssh");
+		mkdirSync(project);
+		mkdirSync(ssh);
+		symlinkSync(ssh, join(project, "ssh"));
+		return { root, project, ssh };
+	}
+
+	it("denies reading through a symlink into a locked location", async () => {
+		const { project, ssh } = setupSymlink();
+		const event = toolEvent("read", "symlink-read-1", {
+			file_path: join(project, "ssh", "id_rsa"),
+		});
+		const result = await handleToolCall(
+			event,
+			makeCtx(project),
+			symlinkConfig(project, ssh),
+		);
+		expect(result).toEqual({
+			block: true,
+			reason: expect.stringContaining("Access denied"),
+		});
+	});
+
+	it("denies a bash path arg through a symlink into a locked location", async () => {
+		const { project, ssh } = setupSymlink();
+		const result = await handleToolCall(
+			bashEvent(`cat ${join(project, "ssh", "id_rsa")}`),
+			makeCtx(project),
+			symlinkConfig(project, ssh),
+		);
+		expect(result).toEqual({
+			block: true,
+			reason: expect.stringContaining("Access denied"),
+		});
+	});
+
+	it("still allows a regular file inside the open project", async () => {
+		const { project, ssh } = setupSymlink();
+		const event = toolEvent("read", "symlink-read-2", {
+			file_path: join(project, "notes.txt"),
+		});
+		const result = await handleToolCall(
+			event,
+			makeCtx(project),
+			symlinkConfig(project, ssh),
+		);
+		expect(result).toBeUndefined();
 	});
 });
