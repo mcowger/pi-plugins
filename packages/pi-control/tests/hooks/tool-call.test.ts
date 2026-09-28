@@ -25,6 +25,7 @@ import {
 } from "../../src/utils/subagent.js";
 import {
 	handleToolCall,
+	formatNudgeMessage,
 	pendingNudges,
 	sessionAllows,
 	sessionAllowKey,
@@ -238,7 +239,9 @@ describe("nudge action", () => {
 			file_path: "/tmp/bar.ts",
 		});
 		await handleToolCall(event, makeCtx("/tmp"), nudgeConfig);
-		expect(pendingNudges.get("nudge-call-2")).toBe("use pluck_read instead");
+		const stored = pendingNudges.get("nudge-call-2") ?? "";
+		expect(stored).toContain("use pluck_read instead");
+		expect(stored).toContain("You called the `read` tool");
 	});
 
 	it("does not register a pending nudge for allowed (non-nudge) tools", async () => {
@@ -280,9 +283,10 @@ describe("piped bash nudge suppression", () => {
 			makeCtx("/tmp"),
 			grepNudgeConfig,
 		);
-		expect(pendingNudges.get("pipe-nudge-1")).toBe(
-			"Prefer the grep tool over grep",
-		);
+		const stored = pendingNudges.get("pipe-nudge-1") ?? "";
+		expect(stored).toContain("Prefer the grep tool over grep");
+		expect(stored).toContain("You ran bash `grep foo`");
+		expect(stored).toContain("matched pattern `grep *`");
 	});
 
 	it("does not nudge when grep is a pipe target", async () => {
@@ -305,9 +309,77 @@ describe("piped bash nudge suppression", () => {
 			makeCtx("/tmp"),
 			grepNudgeConfig,
 		);
-		expect(pendingNudges.get("pipe-nudge-3")).toBe(
-			"Prefer the grep tool over grep",
+		const stored = pendingNudges.get("pipe-nudge-3") ?? "";
+		expect(stored).toContain("Prefer the grep tool over grep");
+		expect(stored).toContain("You ran bash");
+		expect(stored).toContain("matched pattern `grep *`");
+	});
+});
+
+describe("formatNudgeMessage", () => {
+	it("names bash and the shell command for bash nudges", () => {
+		expect(
+			formatNudgeMessage(
+				"bash",
+				"grep foo",
+				"grep *",
+				"Prefer the grep tool over grep",
+			),
+		).toBe(
+			"You ran bash `grep foo` (matched pattern `grep *`). Prefer the grep tool over grep",
 		);
+	});
+
+	it("names the native tool for non-bash nudges", () => {
+		expect(
+			formatNudgeMessage("read", null, undefined, "use pluck_read instead"),
+		).toBe("You called the `read` tool. use pluck_read instead");
+	});
+
+	it("omits the pattern clause when no pattern matched", () => {
+		const msg = formatNudgeMessage("bash", "grep foo", undefined, "hint");
+		expect(msg).toBe("You ran bash `grep foo`. hint");
+	});
+
+	it("truncates long bash commands", () => {
+		const long = `grep ${"x".repeat(200)}`;
+		const msg = formatNudgeMessage("bash", long, "grep *", "hint");
+		expect(msg).toContain("…");
+		expect(msg).toContain("hint");
+	});
+
+	it("notifies the UI with caller context for bash nudges", async () => {
+		const config: ControlsResolvedConfig = {
+			policies: {
+				nudged: {
+					defaultAction: "allow",
+					rules: [
+						{
+							action: "nudge",
+							tool: "bash",
+							pattern: "grep *",
+							message: "Prefer the grep tool over grep",
+						},
+					],
+				},
+			},
+			locations: { "/tmp": "nudged" },
+			defaultPolicy: null,
+			cycleKey: "ctrl+shift+m",
+			agentTimeout: null,
+			nudgeTimeout: null,
+			pathProtection: null,
+			decisions: null,
+		};
+		pendingNudges.clear();
+		const ctx = makeCtx("/tmp");
+		await handleToolCall(bashEvent("grep foo", "notify-nudge-1"), ctx, config);
+		const calls = (ctx.ui.notify as ReturnType<typeof mock>).mock.calls;
+		expect(calls.length).toBe(1);
+		const text = String(calls[0][0]);
+		expect(text).toContain("nudge [nudged]");
+		expect(text).toContain("You ran bash `grep foo`");
+		expect(text).toContain("Prefer the grep tool over grep");
 	});
 });
 
@@ -342,9 +414,10 @@ describe("piped cat nudge suppression", () => {
 			makeCtx("/tmp"),
 			catNudgeConfig,
 		);
-		expect(pendingNudges.get("pipe-cat-1")).toBe(
-			"Prefer the read tool over cat",
-		);
+		const stored = pendingNudges.get("pipe-cat-1") ?? "";
+		expect(stored).toContain("Prefer the read tool over cat");
+		expect(stored).toContain("You ran bash `cat package.json`");
+		expect(stored).toContain("matched pattern `cat *`");
 	});
 
 	it("does not nudge when cat feeds a pipeline", async () => {
@@ -638,7 +711,9 @@ describe("nudgeTimeout escalation (nudge → deny)", () => {
 			nudgeTimeoutConfig,
 		);
 		expect(r4).toBeUndefined();
-		expect(pendingNudges.get("rs-4")).toBe(nudgeMsg);
+		const stored = pendingNudges.get("rs-4") ?? "";
+		expect(stored).toContain(nudgeMsg);
+		expect(stored).toContain("You called the `read` tool");
 	});
 
 	it("does not escalate when nudgeTimeout is null", async () => {

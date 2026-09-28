@@ -348,7 +348,13 @@ When pi-controls acts on a tool call, it shows a notification in the pi UI and (
 
 **Nudge (single line, tool proceeds):**
 ```
-pi-controls: nudge [policy] — Prefer pluck_read for repo files — outline mode + semantic context.
+pi-controls: nudge [policy] — You called the `read` tool. Prefer pluck_read for repo files — outline mode + semantic context.
+```
+
+For bash the caller context names the shell command and matched pattern, so the
+model can tell the native tool apart from the shell invocation:
+```
+pi-controls: nudge [policy] — You ran bash `grep foo` (matched pattern `grep *`). Prefer the grep tool over the bash grep command.
 ```
 
 **Log (tool proceeds, audited):**
@@ -938,7 +944,14 @@ Allow a tool call but inject a reminder into the result so the LLM is guided tow
 When the agent calls `read`, it still gets the file contents — but the tool result also contains:
 
 ```
-[pi-controls nudge] Prefer pluck_read for repo files — it provides outline mode and semantic context.
+[pi-controls nudge] You called the `read` tool. Prefer pluck_read for repo files — it provides outline mode and semantic context.
+```
+
+Bash nudges name the shell command and matched pattern instead, so the model
+can tell the native tool apart from the shell invocation:
+
+```
+[pi-controls nudge] You ran bash `grep foo` (matched pattern `grep *`). Prefer the grep tool over the bash grep command.
 ```
 
 A warning notification is also shown in the pi UI. The LLM can act on the hint immediately or on its next turn.

@@ -779,6 +779,30 @@ function checkPathProtection(
 	return checkProtectedPaths(pathsToCheck, config);
 }
 
+/**
+ * Prefix a nudge message with what triggered it so the model can tell
+ * a native tool apart from a bash shell invocation.
+ *
+ * bash: `You ran bash `grep foo` (matched pattern `grep *`). <message>`
+ * tool: `You called the `read` tool. <message>`
+ */
+export function formatNudgeMessage(
+	toolName: string,
+	command: string | null,
+	matchedPattern: string | undefined,
+	message: string,
+): string {
+	if (toolName === "bash" && command) {
+		const cmd = command.length > 120 ? `${command.slice(0, 120)}…` : command;
+		const pattern =
+			matchedPattern !== undefined
+				? ` (matched pattern \`${matchedPattern}\`)`
+				: "";
+		return `You ran bash \`${cmd}\`${pattern}. ${message}`;
+	}
+	return `You called the \`${toolName}\` tool. ${message}`;
+}
+
 function notifyDecision(
 	ctx: ExtensionContext,
 	action: Action,
@@ -810,8 +834,14 @@ function notifyDecision(
 					? "warning"
 					: "info";
 	if (action === "nudge" && nudgeMessage) {
-		// Single line: no path label (not blocked), nudge message inline.
-		ctx.ui.notify(`pi-controls: nudge${policy} — ${nudgeMessage}`, "warning");
+		// Single line: caller context + nudge message inline (not blocked).
+		const enriched = formatNudgeMessage(
+			toolName,
+			command,
+			matchedPattern,
+			nudgeMessage,
+		);
+		ctx.ui.notify(`pi-controls: nudge${policy} — ${enriched}`, "warning");
 	} else {
 		// Pattern and eval denies have no path restriction to name; a tool deny
 		// names a reachable path, and only a genuine path restriction is "blocked".
@@ -859,9 +889,13 @@ async function executeAction(
 			return undefined;
 
 		case "nudge": {
-			// Allow the tool call but register a message to be injected into the result.
+			// Allow the tool call but register an enriched message (with caller
+			// context) to be injected into the result.
 			if (toolCallId && nudgeMessage) {
-				pendingNudges.set(toolCallId, nudgeMessage);
+				pendingNudges.set(
+					toolCallId,
+					formatNudgeMessage(toolName, command, matchedPattern, nudgeMessage),
+				);
 			}
 			return undefined;
 		}
