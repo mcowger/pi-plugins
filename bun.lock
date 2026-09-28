@@ -19,7 +19,7 @@
     },
     "packages/pi-control": {
       "name": "@mcowger/pi-control",
-      "version": "0.4.0",
+      "version": "0.6.1",
       "dependencies": {
         "@vscode/tree-sitter-wasm": "^0.3.1",
         "minimatch": "^10.2.5",
@@ -66,7 +66,7 @@
     },
     "packages/pi-suppress-providers": {
       "name": "@mcowger/pi-suppress-providers",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "devDependencies": {
         "@biomejs/biome": "2.5.1",
         "@earendil-works/pi-ai": "0.85.1",
