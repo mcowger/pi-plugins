@@ -249,6 +249,68 @@ describe("nudge action", () => {
 	});
 });
 
+describe("piped bash nudge suppression", () => {
+	const grepNudgeConfig: ControlsResolvedConfig = {
+		policies: {
+			nudged: {
+				defaultAction: "allow",
+				rules: [
+					{
+						action: "nudge",
+						tool: "bash",
+						pattern: "grep *",
+						message: "Prefer the grep tool over grep",
+					},
+				],
+			},
+		},
+		locations: { "/tmp": "nudged" },
+		defaultPolicy: null,
+		cycleKey: "ctrl+shift+m",
+		agentTimeout: null,
+		nudgeTimeout: null,
+		pathProtection: null,
+		decisions: null,
+	};
+
+	it("nudges when grep is called directly", async () => {
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent("grep foo", "pipe-nudge-1"),
+			makeCtx("/tmp"),
+			grepNudgeConfig,
+		);
+		expect(pendingNudges.get("pipe-nudge-1")).toBe(
+			"Prefer the grep tool over grep",
+		);
+	});
+
+	it("does not nudge when grep is a pipe target", async () => {
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent(
+				'bun --cwd packages/pi-control test 2>&1 | grep -E "(fail)"',
+				"pipe-nudge-2",
+			),
+			makeCtx("/tmp"),
+			grepNudgeConfig,
+		);
+		expect(pendingNudges.has("pipe-nudge-2")).toBe(false);
+	});
+
+	it("still nudges first-stage grep whose output is piped elsewhere", async () => {
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent("grep foo file.txt | head", "pipe-nudge-3"),
+			makeCtx("/tmp"),
+			grepNudgeConfig,
+		);
+		expect(pendingNudges.get("pipe-nudge-3")).toBe(
+			"Prefer the grep tool over grep",
+		);
+	});
+});
+
 describe("agentTimeout escalation (deny → ask)", () => {
 	// All calls land on /home/user which has no location → defaultPolicy=locked (deny all).
 	const timeoutConfig: ControlsResolvedConfig = {

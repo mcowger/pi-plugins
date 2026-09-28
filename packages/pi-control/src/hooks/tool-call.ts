@@ -1076,6 +1076,13 @@ export async function handleToolCall(
 					const result =
 						approved ??
 						matchRuleWithDetails(resolved.policy, "bash", stage.command);
+					// Piped stages (e.g. `bun test | grep foo`) filter piped stdin
+					// rather than searching files, so a nudge toward a
+					// file-search tool does not apply. Only nudge when the
+					// command is invoked directly.
+					if (stage.pipedInput && !approved && result.action === "nudge") {
+						continue;
+					}
 					matchResults.push({
 						action: result.action,
 						matchedPattern: result.matchedPattern,

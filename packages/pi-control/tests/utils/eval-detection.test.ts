@@ -19,6 +19,7 @@ function stage(
 		redirectFiles: [],
 		pathArgs: [],
 		embeddedSources,
+		pipedInput: false,
 	};
 }
 

@@ -42,6 +42,8 @@ export interface CommandStage {
 	pathArgs: string[];
 	/** Source supplied directly to the command's standard input. */
 	embeddedSources: EmbeddedSource[];
+	/** True when this stage receives piped stdin (non-first stage in a `|` pipeline). */
+	pipedInput: boolean;
 }
 
 // ─── Module state ────────────────────────────────────────────────────────────
@@ -309,6 +311,7 @@ function extractRedirects(
 function buildStage(
 	node: SyntaxNode,
 	inheritedRedirects: SyntaxNode[],
+	pipedInput: boolean,
 ): CommandStage {
 	const ownRedirects = redirectNodes(node);
 	const redirects = [...ownRedirects, ...inheritedRedirects];
@@ -341,6 +344,7 @@ function buildStage(
 		redirectFiles,
 		pathArgs,
 		embeddedSources,
+		pipedInput,
 	};
 }
 
@@ -348,16 +352,32 @@ function collectStages(
 	node: SyntaxNode,
 	stages: CommandStage[],
 	inheritedRedirects: SyntaxNode[] = [],
+	pipedInput = false,
 ): void {
+	if (node.type === "pipeline") {
+		const children = namedChildren(node);
+		for (const [index, child] of children.entries()) {
+			// First stage reads from the original stdin; later stages read
+			// from the previous stage's stdout.
+			collectStages(
+				child,
+				stages,
+				inheritedRedirects,
+				index === 0 ? pipedInput : true,
+			);
+		}
+		return;
+	}
+
 	if (node.type === "redirected_statement") {
 		const body = node.childForFieldName("body");
 		const redirects = redirectNodes(node);
-		if (body) collectStages(body, stages, redirects);
+		if (body) collectStages(body, stages, redirects, pipedInput);
 		return;
 	}
 
 	if (node.type === "command") {
-		stages.push(buildStage(node, inheritedRedirects));
+		stages.push(buildStage(node, inheritedRedirects, pipedInput));
 		// Commands nested in substitutions execute as separate stages.
 		for (const child of namedChildren(node)) {
 			if (
@@ -371,7 +391,7 @@ function collectStages(
 	}
 
 	for (const child of namedChildren(node)) {
-		collectStages(child, stages, inheritedRedirects);
+		collectStages(child, stages, inheritedRedirects, pipedInput);
 	}
 }
 
@@ -407,6 +427,7 @@ function regexFallback(command: string): CommandStage[] {
 			redirectFiles: [],
 			pathArgs,
 			embeddedSources: [],
+			pipedInput: false,
 		},
 	];
 }
