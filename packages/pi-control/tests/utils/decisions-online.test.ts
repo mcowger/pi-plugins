@@ -4,6 +4,7 @@ import {
 	type DecisionsConfig,
 } from "../../src/utils/decisions.js";
 import { resolveDecisions } from "../../src/config.js";
+import { loadLiveEnv } from "./live-env.js";
 
 /**
  * Live online tests against the real Decisions API.
@@ -13,11 +14,13 @@ import { resolveDecisions } from "../../src/config.js";
  *
  *   PICONTROLS_ONLINE_TESTS=1 bun test tests/utils/decisions-online.test.ts
  *
- * They also require OPENROUTER_API_KEY in the environment. Anything else
- * (including plain `bun test`) skips this file with zero network calls.
+ * They also require OPENROUTER_API_KEY, read from `packages/pi-control/.env` (or
+ * the environment). Anything
+ * else (including plain `bun test`) skips this file with zero network calls.
  * All other decisions tests stub `fetch` and never touch the network.
  */
 
+loadLiveEnv();
 const LIVE_RUN =
 	process.env.PICONTROLS_ONLINE_TESTS === "1" &&
 	typeof process.env.OPENROUTER_API_KEY === "string" &&
