@@ -3,6 +3,9 @@
 Guidance for working inside `packages/pi-subagents`. The root `AGENTS.md`
 (monorepo commands, git rules) still applies.
 
+- User guide: [README.md](README.md)
+- Contract alignment and explicit differences: [DESIGN.md](DESIGN.md)
+
 This package is a personal, in-process subagent extension that presents the
 `@tintinweb/pi-subagents` wire contract to Paseo, with a small set of deliberate
 behavioral differences. The whole point of the tests and fixtures is to keep both
@@ -125,7 +128,7 @@ update `tests/playback.test.ts` if the behavior changes on purpose.
   propagate.
 - **Operator config is `<agentDir>/pi-subagents.json`.**
 
-`README.md` has the full table with the rationale.
+`DESIGN.md` has the full tables with the rationale.
 
 ## Unit testing
 

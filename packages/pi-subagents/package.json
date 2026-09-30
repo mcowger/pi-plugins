@@ -27,7 +27,8 @@
 	"files": [
 		"index.ts",
 		"src/",
-		"README.md"
+		"README.md",
+		"DESIGN.md"
 	],
 	"publishConfig": {
 		"access": "public"

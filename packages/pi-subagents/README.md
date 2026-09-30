@@ -1,104 +1,119 @@
 # @mcowger/pi-subagents
 
-Personal, in-process Pi subagents. One main-agent tool call spawns exactly one
-child session. Parallelism comes from independent background calls.
+Personal, in-process subagents for Pi. One `Agent` tool call spawns exactly one
+child session with its own model/thinking, tool policy, and transcript; the
+parent keeps working while the child runs, and parallelism comes from independent
+calls.
 
-The extension exposes the Paseo wire contract used by
-`@tintinweb/pi-subagents`, so Paseo's tintinweb adapter works unchanged:
+The extension speaks the `@tintinweb/pi-subagents` wire contract, so Paseo's
+tintinweb adapter drives it unchanged. Locked model/thinking, a finite depth
+ceiling, and a frozen tool policy are deliberate additions — the contract
+alignment and every intentional difference are documented in
+[DESIGN.md](DESIGN.md).
 
-- `Agent` — spawn one child.
-- `get_subagent_result` — read a run's current or terminal state.
-- `steer_subagent` — send a message to a running child.
+## Installation
 
-All three are registered `model-only`: the model can call them directly, but
-codemode scripts cannot carry orchestration through `ctx.executeTool()`.
+`@mcowger/pi-subagents` is not published to npm yet; install it from the
+repository:
 
-## Contract alignment
+```sh
+git clone https://github.com/mcowger/pi-plugins.git
+pi install ./pi-plugins/packages/pi-subagents
+```
 
-Verified against `@tintinweb/pi-subagents` 0.7.3 by replaying recorded Pi RPC
-traces from both packages side by side (see `tests/fixtures/` and
-`tests/playback.test.ts`). These are the items intended to match byte for byte:
+To try the checkout for one run without installing it:
 
-| Surface | What aligns |
-|---|---|
-| Tool names / exposure | `Agent`, `get_subagent_result`, `steer_subagent`, all `model-only` |
-| `Agent` required args | `subagent_type`, `prompt`, `description` |
-| `steer_subagent` args | `agent_id`, `message` (no `cancel`) |
-| Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` (the `get_subagent_result` guidance line differs — see differences) |
-| Background details | `displayName`, `description`, `subagentType`, `tags`, `toolUses`, `tokens`, `durationMs`, `status:"background"`, `agentId` |
-| Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
-| Notification | `subagent-notification` custom type, the `NotificationDetails` fields (id/status/outputFile/…), delivered `{ deliverAs: "followUp", triggerTurn: true }` (content and suppression differ — see differences) |
-| `get_subagent_result` | Summary text and `details: null` |
-| Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered` — Paseo maps `completed`→completed, `error`→failed, `aborted`/`stopped`→canceled, else running |
-| Lifecycle events | `subagents:created` / `started` / `completed` / `failed` / `steered` with tintinweb's payloads |
-| Definition discovery | `<agentDir>/agents/<name>.md` with trusted `<cwd>/.pi/agents/<name>.md` overrides |
+```sh
+pi --extension /path/to/pi-plugins/packages/pi-subagents/index.ts
+```
 
-The playback test reconstructs each recorded run from its own facts and asserts
-the current builders reproduce the trace byte for byte, so this alignment cannot
-drift silently.
+Restart Pi or run `/reload` after installing. The three tools appear as `Agent`,
+`get_subagent_result`, and `steer_subagent`.
 
-## Explicit differences
+## Quick start
 
-These are intentional and pinned by tests or by the personal design spec. They
-do not affect the fields Paseo's tintinweb adapter reads.
+```text
+Agent {
+  subagent_type: "explore",
+  prompt: "Map the auth flow and report the entry points.",
+  description: "Recon auth"
+}
+```
 
-| Area | `@tintinweb/pi-subagents` | This extension | Reason |
-|---|---|---|---|
-| Unknown / disabled `subagent_type` | Falls back to `general-purpose`, returns a normal completed run with an id | Fails closed before admission: tool error, `details: {}`, no id | Spec §4.4 forbids a generic fallback |
-| Depth | No depth limit; children always have the spawner tools removed | Finite operator `maxDepth` (default `1`); per-agent `maxDepth` only narrows; spawner removed and gate-blocked at the ceiling | Spec §6 recursion guard with an opt-in ceiling |
-| Tool policy | Definition `tools`/`disallowed_tools` allowlist and an `isolated` flag | Definition `tools` allowlist plus frozen per-call `included_tools`/`excluded_tools`, enforced by a dispatch gate for direct and codemode-nested calls | Spec §10 |
-| Extension passing | Children inherit every parent extension | Children always get MCP/codemode/tool_search and only operator-approved refs named by `extensions` | Spec §11 |
-| `Agent` schema extras | Accepts `max_turns`, `resume`, `isolated`, `inherit_context`, `isolation`, `schedule` | Accepts `included_tools`, `excluded_tools`, `extensions`; `max_turns`/`inherit_context` are definition-only and `inherit_context: true` refuses; unknown args rejected (`additionalProperties: false`) | Spec §4.1 |
-| `Agent` description | Static | `prepareLoadout` appends the discovered, enabled agent names + descriptions (`buildAgentCatalog`) | Tool descriptions are re-sent every request, so the available `subagent_type` values stay visible after long runs and compaction; Paseo maps tools by name, so the text is contract-neutral |
-| `get_subagent_result` schema | Has `verbose` | No `verbose` | Not implemented in v1 |
-| `prompt_mode` default | `replace` when omitted | `append` when omitted (gotgenes default) | Seeds set `prompt_mode: replace` explicitly |
-| `locked` | Not supported (0.7.3) | `locked: true` or a field list, gotgenes-style | Spec §4.4 pinned model/thinking |
-| Transcript file | `.output` text file under a `/tmp/pi-subagents-*` directory | Pi session JSONL under `<agentDir>/subagents/<run-id>/` | Spec §8 uses the session file |
-| Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
-| Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |
-| Spawn mode | Foreground (blocking, inline result) and background | Always background; `run_in_background` is accepted but ignored (the result notes the deprecation); block for the result with `get_subagent_result { agent_id, wait: true }` | Only a background spawn exposes the transcript path at spawn time, so Paseo can stream the child live |
-| Notification content | `<task-notification>` XML block with the result and transcript footer | Status line plus the child's final summary, in full up to `NOTIFICATION_RESULT_LIMIT` (10k chars), then a truncation note pointing at `get_subagent_result`; structured fields stay in `details` | Paseo renders a custom message's text as a timeline item, so XML would be shown verbatim |
-| Notification timing | Always notifies and wakes on completion | Always sends the notification (Paseo needs `details` to mark the child finished), but a result already claimed by `get_subagent_result` (`wait: true`, or a terminal read) is delivered with `triggerTurn: false`, so no extra turn | Avoids the redundant wake-up turn without stranding the child's UI state |
-| Child summary | No built-in instruction | A fixed instruction is appended to the child's system prompt to end with a self-contained summary | The final assistant text is what the parent receives back |
-| Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
-| Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
+Every child runs in the background. The spawn result returns the run id and its
+transcript path immediately; block for the result when you need it:
 
-**Child context files.** Children build their own `DefaultResourceLoader`, so they
-resolve `AGENTS.md` / `CLAUDE.md` for their own cwd; the parent's
-`--no-context-files` flag is not propagated. A child therefore sees the project's
-conventions even when the parent run suppressed them.
+```text
+get_subagent_result { agent_id: "<id-from-the-spawn-result>", wait: true }
+```
 
-## What it owns
+A completion notification carries the child's final summary, so you can also keep
+working and be woken when it finishes.
 
-- **Locked model + thinking.** Each agent definition can lock `model` and
-  `thinking` independently. A locked value is enforced exactly; a conflicting
-  caller value is discarded, never clamped, and there is no fallback to the
-  parent model. Supported thinking levels come from the model's own
-  `thinkingLevelMap` at runtime; no level or model name is hardcoded.
-- **Depth ceiling.** Root is depth 0. `maxDepth` is a finite operator setting
-  (default `1`). A per-agent `maxDepth` only narrows the inherited lineage. At
-  the ceiling the spawner tool is removed from the model's tool set and the
-  dispatch gate refuses it anyway.
-- **Frozen tool policy.** `included_tools` / `excluded_tools` freeze at
-  admission. The dispatch gate enforces the policy for direct calls and for
-  calls codemode scripts make with `ctx.executeTool()`, including underlying MCP
-  calls. Exclusion always wins; `included_tools: []` means no tools at all.
-- **Approved extension passing.** The child always receives the mandatory MCP,
-  codemode, and tool_search extensions. Extra extensions come only from
-  operator-approved refs.
-- **Completion notifications.** Terminal `subagent-notification` messages use
-  tintinweb's `{ deliverAs: "followUp", triggerTurn: true }` delivery.
-- **Transcript visibility.** Every child runs in the background, so the spawn
-  result carries one unadorned `Output file: <path>` line and Paseo streams it
-  live. Child sessions persist to their own JSONL file under
-  `<agentDir>/subagents/<run-id>/`.
+## Tools
+
+All three tools are `model-only`: the model can call them directly, but codemode
+scripts cannot carry orchestration through `ctx.executeTool()`.
+
+### `Agent`
+
+Spawn exactly one child.
+
+| Arg | Required | Meaning |
+|---|---|---|
+| `subagent_type` | yes | Agent definition name (see [Agent definitions](#agent-definitions)) |
+| `prompt` | yes | The task for the child |
+| `description` | yes | Short human-facing description |
+| `included_tools` | no | Per-call allowlist; `[]` means no tools |
+| `excluded_tools` | no | Per-call denylist; always wins over inclusion |
+| `extensions` | no | Operator-approved extension names for this child |
+| `model` | no | Exact `provider/modelId` or a fuzzy name |
+| `thinking` | no | Level from the resolved model's supported levels |
+| `run_in_background` | no | Accepted for compatibility but **ignored** — every child is background |
+
+The spawn result carries `Agent ID: <id>` and one unadorned
+`Output file: <path>` line (the child's Pi session JSONL). Paseo uses that line
+to stream the child's transcript live.
+
+### `get_subagent_result`
+
+Read a run's current or terminal state, or block for it.
+
+| Arg | Required | Meaning |
+|---|---|---|
+| `agent_id` | yes | The id from the spawn result |
+| `wait` | no | Await terminal state without advancing the child |
+
+`wait: true` returns the result as a tool result and suppresses the notification's
+wake-up turn (the notification is still sent so the UI clears the run).
+
+### `steer_subagent`
+
+Send a message to a running child; it is delivered after the child's current tool
+execution.
+
+| Arg | Required | Meaning |
+|---|---|---|
+| `agent_id` | yes | The id from the spawn result |
+| `message` | yes | Text to inject into the child |
+
+### Notifications and transcripts
+
+On completion the child emits a `subagent-notification` custom message: a status
+line plus the child's final summary (in full up to ~10k characters, then a
+truncation note). Every child is instructed to end with a self-contained summary,
+because that text is what the parent receives back. Child sessions persist under
+`<agentDir>/subagents/<run-id>/`.
 
 ## Agent definitions
 
-Definitions live at `<agentDir>/agents/<name>.md` (default
-`~/.pi/agent/agents/`) with trusted project overrides at `<cwd>/.pi/agents/`.
-Any name is allowed; the filename is the agent type. The frontmatter follows the
-`@gotgenes/pi-subagents` format:
+Definitions live at `<agentDir>/agents/<name>.md` (default `~/.pi/agent/agents/`)
+with trusted project overrides at `<cwd>/.pi/agents/`. Any name is allowed; the
+filename is the agent type. The available names and descriptions are injected
+into the `Agent` tool description each session, so the model sees them even after
+a long run or a compaction.
+
+The frontmatter follows the `@gotgenes/pi-subagents` format:
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -120,10 +135,10 @@ A `locked:` declaration is the only case where a spawn caller's value is
 discarded; otherwise the caller wins and the definition fills the gaps. The
 definition body is appended to the child's system prompt per `prompt_mode`.
 
-Thinking levels are never hardcoded. A definition's unsupported level is
-dropped so the child inherits rather than clamping to `off`; a caller's
-unsupported level is refused. The resolved model and level are asserted after
-the child binds and before its first request.
+Thinking levels are never hardcoded. A definition's unsupported level is dropped
+so the child inherits rather than clamping to `off`; a caller's unsupported level
+is refused. The resolved model and level are asserted after the child binds and
+before its first request.
 
 Example (`explore.md`):
 
@@ -149,9 +164,11 @@ enforces the same frozen policy for direct calls and for calls codemode scripts
 make with `ctx.executeTool()`, including underlying MCP calls. `tools: none` or
 `included_tools: []` means no tools at all.
 
-## Operator config
+## Operator configuration
 
-`<agentDir>/pi-subagents.json`:
+`<agentDir>/pi-subagents.json` (default `~/.pi/agent/pi-subagents.json`), read at
+session start. A missing file uses the defaults; an invalid file warns and falls
+back to the defaults.
 
 ```json
 {
@@ -163,11 +180,21 @@ make with `ctx.executeTool()`, including underlying MCP calls. `tools: none` or
 }
 ```
 
-`maxDepth` must be a finite non-negative integer. Approved refs are
-operator-supplied only; the model can never name a raw module path.
+| Field | Default | Meaning |
+|---|---|---|
+| `maxDepth` | `1` | Global, finite, non-negative depth ceiling. Root is depth 0; a child is depth 1. There is no unbounded mode |
+| `approvedExtensions` | `{}` | Operator-chosen name → extension ref. Only these names are accepted in a spawn's `extensions`; the model can never name a raw module path |
+| `excludedExtensions` | `[]` | Approved refs removed from child inheritance and selection |
 
 ## Not in v1
 
 `ask_parent`, `notify_parent`, `resume`, `verbose`, worktree isolation,
 scheduling, extension/skill inheritance, and the `/agents` interactive menu are
 not implemented. `inherit_context: true` refuses admission.
+
+## Design and development
+
+- [DESIGN.md](DESIGN.md) — the wire contract, contract-alignment and
+  explicit-difference tables, and what the extension owns.
+- [AGENTS.md](AGENTS.md) — maintainer invariants, the unit-test map, transcript
+  policy, and the live-harness usage.
