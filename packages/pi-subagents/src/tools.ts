@@ -381,9 +381,11 @@ export function buildSteerTool(deps: SubagentToolDeps) {
 				isStreaming?: boolean;
 				steer(text: string): Promise<unknown>;
 				prompt(text: string): Promise<void>;
+				getContextUsage?(): { percent?: number | null } | undefined;
 			};
 			if (session.isStreaming) await session.steer(params.message);
 			else await session.prompt(params.message);
+			run.contextPercent ??= session.getContextUsage?.()?.percent ?? undefined;
 			deps.emitEvent(
 				"subagents:steered",
 				buildSteeredEvent(run, params.message),

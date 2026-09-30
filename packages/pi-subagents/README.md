@@ -56,7 +56,14 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | `locked` | Not supported (0.7.3) | `locked: true` or a field list, gotgenes-style | Spec §4.4 pinned model/thinking |
 | Transcript file | `.output` text file under a `/tmp/pi-subagents-*` directory | Pi session JSONL under `<agentDir>/subagents/<run-id>/` | Spec §8 uses the session file |
 | Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
+| Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |
+| Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
 | Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
+
+**Child context files.** Children build their own `DefaultResourceLoader`, so they
+resolve `AGENTS.md` / `CLAUDE.md` for their own cwd; the parent's
+`--no-context-files` flag is not propagated. A child therefore sees the project's
+conventions even when the parent run suppressed them.
 
 ## What it owns
 

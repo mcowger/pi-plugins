@@ -22,6 +22,9 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 - **Status vocabulary.** `running`, `background`, `completed`, `steered`,
   `aborted`, `stopped`, `error`. Terminal states are immutable
   (`SubagentRun.transition` throws). Never emit `failed`/`canceled`/`Done`.
+- **Provider errors map to `error`.** A child whose last assistant response has
+  `stopReason: "error"` transitions to `error` (`resolveTerminalStatus`), not
+  `completed`. Pinned by `tests/runtime.test.ts` and the live `error` scenario.
 - **Background result.** Exact tintinweb text, including the unadorned,
   whitespace-free `Output file: <path>` line.
 - **Foreground result.** `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>`
@@ -69,6 +72,13 @@ update `tests/playback.test.ts` if the behavior changes on purpose.
 - **Transcript is the Pi session JSONL** under `<agentDir>/subagents/<run-id>/`;
   tintinweb writes a `.output` text file.
 - **Extra `subagents:child:session-created` / `disposed` events** for pi-control.
+- **Concurrent completions are not batched**: one `subagent-notification` per
+  child; tintinweb group-joins them into one.
+- **Lifecycle events**: `created`/`started` for all runs, `completed`/`failed`
+  for background only; tintinweb also emits them for foreground.
+- **Child context files**: children resolve `AGENTS.md`/`CLAUDE.md` for their own
+  cwd via their own resource loader; the parent's `--no-context-files` does not
+  propagate.
 - **Operator config is `<agentDir>/pi-subagents.json`.**
 
 `README.md` has the full table with the rationale.
@@ -93,6 +103,7 @@ What each test pins:
 | `tests/transcript.test.ts` | wire text/details builders |
 | `tests/tools.test.ts` | schemas and tool behavior |
 | `tests/extension.test.ts` | factory wiring: registration, ceiling removal, gate |
+| `tests/runtime.test.ts` | provider-error / turn-limit terminal status |
 | `tests/playback.test.ts` | **contract alignment against recorded traces** |
 
 When changing a wire builder (`src/transcript.ts`), `tests/transcript.test.ts`
@@ -121,16 +132,36 @@ The live harness runs the real `pi` binary in RPC mode against an isolated
 `PI_CODING_AGENT_DIR`, once per target, and records the event stream.
 
 **Never run this automatically** — it makes real, paid model calls and is
-non-deterministic. Run it only when explicitly asked.
+non-deterministic. Run it only when explicitly asked. Each scenario finishes in
+well under a minute; the internal waits are bounded (≤150s).
 
 ```sh
-# 1. Capture both sides (each writes <root>/<label>/<label>-rpc.jsonl)
-bun tests/live/driver.ts mine
-bun tests/live/driver.ts tintinweb
+# 1. Capture both sides for a scenario (writes <root>/<label>/<scenario>/)
+bun tests/live/driver.ts mine <scenario>
+bun tests/live/driver.ts tintinweb <scenario>
 
 # 2. Compare at the contract level (masks run-dependent values)
-bun tests/live/compare.ts
+bun tests/live/compare.ts <scenario>
 ```
+
+Scenarios:
+
+| Scenario | Covers | Comparable to tintinweb |
+|---|---|---|
+| `contract` | background/foreground/bad-type/followup | yes |
+| `nested` | child spawns a grandchild at `maxDepth: 2` | no — tintinweb strips the spawner |
+| `concurrent` | three background children in one turn | yes (tintinweb group-joins completions) |
+| `steer` | steer a running background child | yes |
+| `error` | child against the `faulty` faux provider | yes |
+| `abort` | child that wraps up at its turn limit | yes |
+| `mcp` | real `mcp.json` + frozen policy incl. codemode-nested | no — tintinweb has no gate |
+| `shutdown` | long child, then close stdin | yes |
+
+The comparator compares **tool results and notifications** projected onto the
+contract fields; lifecycle events are informational because tintinweb emits them
+inconsistently. `tests/live/agents/` holds the scenario agents and
+`tests/live/fault-provider.ts` the failing provider; the driver copies both into
+the isolated dir.
 
 Files: `tests/live/driver.ts` (scenario + RPC client), `tests/live/probe.ts`
 (records `pi.events` lifecycle signals), `tests/live/compare.ts` (canonical diff).

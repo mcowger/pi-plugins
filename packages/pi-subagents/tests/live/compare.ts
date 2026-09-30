@@ -2,16 +2,20 @@
  * Compare two recorded live traces at the contract level.
  *
  * Canonicalizes both traces, masking run-dependent values (ids, paths, token
- * counts, durations), and reports structural differences. The known intentional
- * deviations are excluded: the unknown-type fallback and the extra
- * `subagents:child:*` events. Lifecycle events are compared as a set so payload
- * order does not matter.
+ * counts, durations), projecting details onto the fields Paseo actually reads,
+ * and reporting structural differences. Known intentional deviations are
+ * excluded: the unknown-type fallback and the extra `subagents:child:*` events.
+ *
+ * tintinweb varies run-to-run in optional, passthrough fields (`cost`,
+ * `modelName`, `usage`, `maxTurns`) and in lifecycle-event emission, so those are
+ * informational here; the strict comparison covers tool results and
+ * notifications. Our lifecycle payloads are pinned exactly by playback tests.
  *
  * Usage:
- *   bun tests/live/compare.ts [mine] [tintinweb]
+ *   bun tests/live/compare.ts [scenario] [mine] [tintinweb]
  *
- * Reads `<PI_LIVE_DIR>/<label>/<label>-rpc.jsonl` and exits non-zero when the
- * canonical transcripts differ.
+ * Reads `<PI_LIVE_DIR>/<label>/<scenario>/<label>-rpc.jsonl` and exits non-zero
+ * when the canonical transcripts differ.
  */
 
 import { readFileSync } from "node:fs";
@@ -21,8 +25,8 @@ const ROOT = process.env.PI_LIVE_DIR ?? "/tmp/pi-subagents-live";
 
 type Rec = Record<string, any>;
 
-function load(label: string): Rec[] {
-	const path = join(ROOT, label, `${label}-rpc.jsonl`);
+function load(label: string, scenario: string): Rec[] {
+	const path = join(ROOT, label, scenario, `${label}-rpc.jsonl`);
 	return readFileSync(path, "utf8")
 		.split("\n")
 		.filter((line) => line.trim())
@@ -32,10 +36,7 @@ function load(label: string): Rec[] {
 function maskText(text: string): string {
 	return (
 		text
-			// Absolute paths first, so the differing transcript extensions disappear
-			// and ids inside a path are masked with it. Not XML closing tags.
 			.replace(/(?<![<\w])\/(?!>)[^\s"'<>]+/g, "<PATH>")
-			// UUIDs (5-segment) and tintinweb's shorter run ids (3-segment).
 			.replace(
 				/[0-9a-f]{8}-[0-9a-f]{3,4}-[0-9a-f]{3,4}-[0-9a-f]{3,4}-[0-9a-f]{3,4}/gi,
 				"<ID>",
@@ -43,11 +44,15 @@ function maskText(text: string): string {
 			.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{3}/gi, "<ID>")
 			.replace(/[0-9a-f]{12}/g, "<ID>")
 			.replace(/call_[0-9a-f]+/g, "<CALL>")
+			// `<summary>` and `<result>` carry model-generated prose, not contract fields.
+			.replace(/<summary>[\s\S]*?<\/summary>/g, "<summary><S></summary>")
+			.replace(/<result>[\s\S]*?<\/result>/g, "<result><R></result>")
 			.replace(/in \d+\.\d+s/g, "in <DUR>")
 			.replace(/Duration: [^\n|]+/g, "Duration: <DUR>")
 			.replace(/\d+(\.\d+)?(k|M)? token/g, "<TOKENS>")
 			.replace(/Tool uses: \d+/g, "Tool uses: N")
 			.replace(/Context: \d+%/g, "Context: N%")
+			.replace(/context \d+% full/g, "context N% full")
 			.replace(
 				/<total_tokens>\d+<\/total_tokens>/g,
 				"<total_tokens>N</total_tokens>",
@@ -70,12 +75,56 @@ function canonical(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(canonical);
 	if (value && typeof value === "object") {
 		const out: Record<string, unknown> = {};
-		for (const key of Object.keys(value).sort()) {
+		for (const key of Object.keys(value).sort())
 			out[key] = canonical((value as Record<string, unknown>)[key]);
-		}
 		return out;
 	}
 	return value;
+}
+
+/** Fields the Paseo adapter reads, plus the stable tintinweb metrics. */
+const BACKGROUND_DETAIL_KEYS = [
+	"agentId",
+	"description",
+	"displayName",
+	"durationMs",
+	"status",
+	"subagentType",
+	"tags",
+	"tokens",
+	"toolUses",
+];
+const FOREGROUND_DETAIL_KEYS = [
+	...BACKGROUND_DETAIL_KEYS,
+	"turnCount",
+	"maxTurns",
+];
+const NOTIFICATION_KEYS = [
+	"id",
+	"description",
+	"status",
+	"toolUses",
+	"turnCount",
+	"totalTokens",
+	"durationMs",
+	"outputFile",
+	"resultPreview",
+	"error",
+];
+
+function project(
+	details: Rec | null | undefined,
+	keys: readonly string[],
+): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const key of keys) {
+		if (details && key in details) out[key] = details[key];
+	}
+	return out;
+}
+
+function isBackgroundDetails(details: Rec | undefined): boolean {
+	return details?.status === "background";
 }
 
 /** The unknown-type call: tintinweb falls back, this extension fails closed. */
@@ -89,12 +138,12 @@ function isUnknownTypeResult(record: Rec): boolean {
 }
 
 interface Transcript {
-	lines: string[];
+	strict: string[];
 	events: string[];
 }
 
 function canonicalTranscript(records: Rec[]): Transcript {
-	const lines: string[] = [];
+	const strict: string[] = [];
 	const events: string[] = [];
 	for (const record of records) {
 		if (record.type === "extension_ui_request") {
@@ -102,71 +151,81 @@ function canonicalTranscript(records: Rec[]): Transcript {
 			if (message.startsWith("PROBE subagents:child:")) continue;
 			if (!message.startsWith("PROBE ")) continue;
 			if (message.includes("cmp bad type")) continue;
-			const payload = message.slice("PROBE ".length);
-			const channel = payload.slice(0, payload.indexOf(" "));
-			let canonicalPayload = payload.slice(payload.indexOf("{"));
-			try {
-				canonicalPayload = JSON.stringify(
-					canonical(JSON.parse(payload.slice(payload.indexOf("{")))),
-				);
-			} catch {
-				// Leave non-JSON payloads as text.
-			}
-			events.push(maskText(`PROBE ${channel} ${canonicalPayload}`));
+			events.push(maskText(message.slice(0, message.indexOf("{"))));
 			continue;
 		}
 		if (record.type === "tool_execution_start") {
 			if ((record.args as Rec | undefined)?.subagent_type === "does-not-exist")
 				continue;
-			lines.push(
-				`START ${record.toolName} ${JSON.stringify(canonical(record.args))}`,
-			);
+			const args = canonical(record.args) as Record<string, unknown>;
+			delete args.run_in_background;
+			strict.push(`START ${record.toolName} ${JSON.stringify(args)}`);
 			continue;
 		}
 		if (record.type === "tool_execution_end") {
 			if (isUnknownTypeResult(record)) continue;
 			const text = record.result?.content?.[0]?.text ?? "";
-			lines.push(
-				`END ${record.toolName} err=${record.isError}\n${maskText(text)}\n${JSON.stringify(canonical(record.result?.details ?? null))}`,
+			const details = record.result?.details as Rec | null | undefined;
+			const keys = isBackgroundDetails(details ?? undefined)
+				? BACKGROUND_DETAIL_KEYS
+				: FOREGROUND_DETAIL_KEYS;
+			const projected = details == null ? null : project(details, keys);
+			strict.push(
+				`END ${record.toolName} err=${record.isError}\n${maskText(text)}\n${JSON.stringify(canonical(projected))}`,
 			);
 			continue;
 		}
 		if (record.type === "message_end" && record.message?.role === "custom") {
-			// `maxTurns` is an optional passthrough field that tintinweb emits
-			// inconsistently for background runs; Paseo ignores it.
-			const details = { ...(record.message.details as Rec | undefined) };
-			delete details.maxTurns;
-			lines.push(
+			const details = project(record.message.details, NOTIFICATION_KEYS);
+			// resultPreview is model-generated prose, not a contract field.
+			if ("resultPreview" in details) details.resultPreview = "<RESULT>";
+			strict.push(
 				`CUSTOM ${record.message.customType}\n${maskText(record.message.content ?? "")}\n${JSON.stringify(canonical(details))}`,
 			);
 		}
 	}
-	return { lines, events: events.sort() };
+	return { strict: strict.sort(), events: events.sort() };
 }
 
-const mine = canonicalTranscript(load(process.argv[2] ?? "mine"));
-const oracle = canonicalTranscript(load(process.argv[3] ?? "tintinweb"));
-const left = [...mine.lines, ...mine.events];
-const right = [...oracle.lines, ...oracle.events];
+const scenario = process.argv[2] ?? "contract";
+const mine = canonicalTranscript(load(process.argv[3] ?? "mine", scenario));
+const oracle = canonicalTranscript(
+	load(process.argv[4] ?? "tintinweb", scenario),
+);
 
-const max = Math.max(left.length, right.length);
+const max = Math.max(mine.strict.length, oracle.strict.length);
 const slice = Number(process.env.PI_LIVE_SLICE ?? 300);
 let differences = 0;
 for (let i = 0; i < max; i++) {
-	if (left[i] !== right[i]) {
+	if (mine.strict[i] !== oracle.strict[i]) {
 		differences++;
 		console.log(`--- mismatch at record ${i}`);
 		console.log(
-			`  mine:      ${String(left[i]).replace(/\n/g, "\\n").slice(0, slice)}`,
+			`  mine:      ${String(mine.strict[i]).replace(/\n/g, "\\n").slice(0, slice)}`,
 		);
 		console.log(
-			`  tintinweb: ${String(right[i]).replace(/\n/g, "\\n").slice(0, slice)}`,
+			`  tintinweb: ${String(oracle.strict[i]).replace(/\n/g, "\\n").slice(0, slice)}`,
 		);
 	}
 }
+const countByChannel = (events: string[]) => {
+	const counts = new Map<string, number>();
+	for (const event of events) {
+		const channel = event.split(" ")[1] ?? event;
+		counts.set(channel, (counts.get(channel) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.map(([channel, count]) => `${channel}x${count}`)
+		.sort()
+		.join(", ");
+};
+console.log(`events mine:      ${countByChannel(mine.events)}`);
+console.log(`events tintinweb: ${countByChannel(oracle.events)}`);
 if (differences === 0) {
-	console.log(`OK: ${left.length} canonical records match`);
+	console.log(
+		`OK: ${mine.strict.length} contract records match (events informational)`,
+	);
 	process.exit(0);
 }
-console.log(`${differences} difference(s)`);
+console.log(`${differences} contract difference(s)`);
 process.exit(1);

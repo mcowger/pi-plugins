@@ -158,6 +158,8 @@ function agentInstructions(definition: AgentDefinition): string | undefined {
 interface TrackState {
 	hardAborted: boolean;
 	softSteered: boolean;
+	/** Message from the last assistant response when it ended in a provider error. */
+	providerError?: string;
 }
 
 interface AssistantUsage {
@@ -200,12 +202,24 @@ function trackRun(
 		}
 		if (event.type === "message_end") {
 			const message = event.message as
-				| { role?: string; usage?: AssistantUsage }
+				| {
+						role?: string;
+						usage?: AssistantUsage;
+						stopReason?: string;
+						errorMessage?: string;
+				  }
 				| undefined;
 			if (message?.role === "assistant" && message.usage) {
 				run.lifetimeUsage.input += message.usage.input ?? 0;
 				run.lifetimeUsage.output += message.usage.output ?? 0;
 				run.lifetimeUsage.cacheWrite += message.usage.cacheWrite ?? 0;
+			}
+			// Track the last assistant response: a recovered retry clears the flag.
+			if (message?.role === "assistant") {
+				state.providerError =
+					message.stopReason === "error"
+						? (message.errorMessage ?? "provider error")
+						: undefined;
 			}
 		}
 	});
@@ -221,6 +235,23 @@ function captureContextPercent(run: SubagentRun, session: AgentSession): void {
 	}
 }
 
+/**
+ * Terminal status for a child that finished its prompt without throwing.
+ * A provider error wins over a turn-limit wrap-up; playback and live tests
+ * pin the resulting `error` → `subagents:failed` behavior.
+ */
+export function resolveTerminalStatus(
+	state: { providerError?: string; hardAborted: boolean; softSteered: boolean },
+	maxTurns: number | undefined,
+): { status: "error" | "aborted" | "steered" | "completed"; error?: string } {
+	if (state.providerError)
+		return { status: "error", error: state.providerError };
+	if (state.hardAborted)
+		return { status: "aborted", error: `max_turns ${maxTurns} reached` };
+	if (state.softSteered) return { status: "steered" };
+	return { status: "completed" };
+}
+
 async function runChild(
 	run: SubagentRun,
 	session: AgentSession,
@@ -234,15 +265,14 @@ async function runChild(
 		captureContextPercent(run, session);
 		run.resultText ??= session.getLastAssistantText();
 		if (!run.terminal) {
-			if (tracker.state.hardAborted) {
-				run.transition("aborted", {
-					error: `max_turns ${maxTurns} reached`,
+			const terminal = resolveTerminalStatus(tracker.state, maxTurns);
+			if (terminal.status === "completed") {
+				run.transition("completed", {
 					summary: session.getLastAssistantText(),
 				});
-			} else if (tracker.state.softSteered) {
-				run.transition("steered", { summary: session.getLastAssistantText() });
 			} else {
-				run.transition("completed", {
+				run.transition(terminal.status, {
+					error: terminal.error,
 					summary: session.getLastAssistantText(),
 				});
 			}
