@@ -7,6 +7,7 @@ import {
 	buildNotificationDetails,
 	buildNotificationText,
 	NOTIFICATION_RESULT_LIMIT,
+	notificationDeliveryOptions,
 	escapeXml,
 	formatTaskNotification,
 	formatTokens,
@@ -152,6 +153,19 @@ describe("transcript wire shapes", () => {
 		expect(text).toContain("truncated");
 		expect(text).toContain("get_subagent_result");
 		expect(text.length).toBeLessThan(NOTIFICATION_RESULT_LIMIT + 500);
+	});
+
+	it("suppresses only the wake-up turn for a claimed result", () => {
+		const run = makeRun();
+		expect(notificationDeliveryOptions(run)).toEqual({
+			deliverAs: "followUp",
+			triggerTurn: true,
+		});
+		run.claimResult();
+		expect(notificationDeliveryOptions(run)).toEqual({
+			deliverAs: "followUp",
+			triggerTurn: false,
+		});
 	});
 
 	it("escapes XML special characters", () => {

@@ -243,6 +243,21 @@ export function buildNotificationText(run: SubagentRun): string {
 	);
 }
 
+/**
+ * Delivery options for the completion notification.
+ *
+ * The notification is always sent because Paseo's tintinweb adapter derives the
+ * child's terminal status from its `details`; suppressing it entirely leaves the
+ * child stuck "working". Only the wake-up turn is skipped when a caller already
+ * claimed the result with `get_subagent_result`.
+ */
+export function notificationDeliveryOptions(run: SubagentRun): {
+	deliverAs: "followUp";
+	triggerTurn: boolean;
+} {
+	return { deliverAs: "followUp", triggerTurn: !run.resultRequested };
+}
+
 /** Full-result budget for the completion notification before it points at the tool. */
 export const NOTIFICATION_RESULT_LIMIT = 10_000;
 

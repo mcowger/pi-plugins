@@ -10,7 +10,7 @@
  *
  * Scenarios:
  *   contract    background/foreground/bad-type/followup (default)
- *   wait        block on a child's result; no notification should fire (mine only)
+ *   wait        block on a child's result; status still reported, no extra turn (mine only)
  *   nested      child spawns a grandchild (this extension only)
  *   concurrent  three background children in one turn
  *   steer       steer a running background child
@@ -438,8 +438,8 @@ function toolResultText(record: Rec): string {
 
 async function runWait(rpc: Rpc, tool: string): Promise<void> {
 	// Spawn a background child and immediately block for its result in the same
-	// turn. The waiter claims the result, so the completion notification (and its
-	// extra turn) must be suppressed.
+	// turn. The waiter claims the result: the notification must still fire so Paseo
+	// learns the child finished, but it must not start a wake-up turn.
 	await sendPrompt(
 		rpc,
 		"wait-1",
@@ -452,9 +452,28 @@ async function runWait(rpc: Rpc, tool: string): Promise<void> {
 		})}. Then call the get_subagent_result tool exactly once with the agent_id from that result and wait: true. Then reply with the single word DONE and stop.`,
 	);
 	await sleep(2_000);
-	const notifications = rpc.records.filter(isNotification).length;
-	if (notifications > 0) {
-		throw new Error(`waited child still notified the parent ${notifications}x`);
+	const notifications = rpc.records.filter(isNotification);
+	const completed = notifications.some(
+		(record) =>
+			((record.message as Rec | undefined)?.details as Rec | undefined)
+				?.status === "completed",
+	);
+	if (!completed) {
+		throw new Error("waited child never reported its terminal status");
+	}
+	const resultEnd = rpc.records.findIndex(isToolEnd("get_subagent_result"));
+	const turnsAfterResult =
+		resultEnd === -1
+			? 0
+			: rpc.records
+					.slice(resultEnd + 1)
+					.filter((record) => record.type === "turn_start").length;
+	// Pi starts one turn to consume each tool result, so the final answer is one
+	// turn. A notification wake-up would add a second one.
+	if (resultEnd === -1 || turnsAfterResult > 1) {
+		throw new Error(
+			`claimed result started ${turnsAfterResult} turn(s) after the tool result; expected at most 1`,
+		);
 	}
 	const resultText = rpc.records
 		.filter(isToolEnd("get_subagent_result"))

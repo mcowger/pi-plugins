@@ -30,6 +30,7 @@ import {
 	buildSteeredEvent,
 	buildSteerNotRunningText,
 	buildSteerSentText,
+	notificationDeliveryOptions,
 	RUN_IN_BACKGROUND_NOTE,
 } from "./transcript.js";
 import type { AgentDefinition, Lineage, OperatorConfig } from "./types.js";
@@ -305,10 +306,9 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 						failed ? "subagents:failed" : "subagents:completed",
 						buildEventData(finished),
 					);
-					// A caller already blocking on get_subagent_result { wait: true }
-					// gets the result as a tool result; waking the parent again would only
-					// burn a redundant turn.
-					if (finished.resultRequested) return;
+					// Always send the notification: Paseo's tintinweb adapter derives the
+					// child's terminal status from its `details`. Only the wake-up turn is
+					// suppressed when a caller already claimed the result.
 					deps.sendMessage(
 						{
 							customType: "subagent-notification",
@@ -316,7 +316,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 							display: true,
 							details: buildNotificationDetails(finished, 500),
 						},
-						{ deliverAs: "followUp", triggerTurn: true },
+						notificationDeliveryOptions(finished),
 					);
 				},
 				onChildCreated: (childSessionId) =>
