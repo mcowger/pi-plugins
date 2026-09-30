@@ -543,20 +543,21 @@ async function runMcp(rpc: Rpc, tool: string): Promise<void> {
 
 async function runPolicy(rpc: Rpc, tool: string): Promise<void> {
 	// `explore` declares only read,bash,grep,find,ls; with real MCP configured the
-	// child must not gain codemode/tool_search/MCP tools anyway.
+	// child must not gain codemode/tool_search/MCP tools on any turn, including
+	// after the servers finish connecting. The prompt forces several turns.
 	await sendPrompt(
 		rpc,
 		"policy-1",
 		`${spawnInstruction(tool, {
 			subagent_type: "explore",
 			prompt:
-				"Reply with exactly the word pong and nothing else. Do not call any tool.",
+				"Run bash with `sleep 5`. Then run bash with `sleep 5` again. Then run bash with `sleep 5` a third time. Then reply with the single word pong.",
 			description: "policy probe",
 			run_in_background: true,
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await waitNotifications(rpc, 1, 30_000);
-	await waitIdle(rpc, 30_000);
+	await waitNotifications(rpc, 1, 45_000);
+	await waitIdle(rpc, 45_000);
 }
 
 async function runShutdown(rpc: Rpc, tool: string): Promise<void> {
