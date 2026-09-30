@@ -26,14 +26,16 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   `stopReason: "error"` transitions to `error` (`resolveTerminalStatus`), not
   `completed`. Pinned by `tests/runtime.test.ts` and the live `error` scenario.
 - **Background result.** Exact tintinweb text, including the unadorned,
-  whitespace-free `Output file: <path>` line.
-- **Foreground result.** `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>`
-  followed by the unadorned `Output file: <path>` line (so Paseo can attach the
-  finished foreground child's transcript).
+  whitespace-free `Output file: <path>` line. The `get_subagent_result` guidance
+  line deliberately tells the model to use `wait: true` (a deviation).
+- **Every child is background.** `Agent` always returns immediately with the id
+  and `Output file:` line; `run_in_background` is accepted but ignored. A caller
+  that wants to block uses `get_subagent_result { agent_id, wait: true }`. Only a
+  background spawn exposes the transcript path at spawn time, so Paseo streams
+  the child live. The foreground builders remain only for the recorded fixtures.
 - **Details shape.** Background: `displayName`, `description`, `subagentType`,
-  `tags`, `toolUses`, `tokens`, `durationMs`, `status`, `agentId`. Foreground adds
-  `turnCount`, `maxTurns`. Tag order is `twin`, `thinking: …`, `inherit context`,
-  `background`, `max turns: …`.
+  `tags`, `toolUses`, `tokens`, `durationMs`, `status`, `agentId`. Tag order is
+  `twin`, `thinking: …`, `inherit context`, `background`, `max turns: …`.
 - **Notification.** Custom type `subagent-notification`; `<task-notification>`
   XML (with `<context_percent>`), the `Full transcript available at:` footer, the
   `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
@@ -64,6 +66,11 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 These are intentional and must remain. Do not "fix" them to match tintinweb; do
 update `tests/playback.test.ts` if the behavior changes on purpose.
 
+- **Always background; `run_in_background` ignored.** tintinweb has foreground
+  (blocking, inline result) and background; we always spawn background so Paseo
+  can stream the child live. If the caller passes `run_in_background` anyway, the
+  agent still starts and the result notes the deprecation. Blocking is
+  `get_subagent_result { wait: true }`.
 - **Unknown/disabled `subagent_type` fails closed** (tool error, `details: {}`,
   no id) instead of tintinweb's fallback to `general-purpose`. Spec §4.4.
 - **Depth ceiling** exists; tintinweb has no limit.

@@ -24,11 +24,9 @@ traces from both packages side by side (see `tests/fixtures/` and
 | Tool names / exposure | `Agent`, `get_subagent_result`, `steer_subagent`, all `model-only` |
 | `Agent` required args | `subagent_type`, `prompt`, `description` |
 | `steer_subagent` args | `agent_id`, `message` (no `cancel`) |
-| Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` |
+| Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` (the `get_subagent_result` guidance line differs — see differences) |
 | Background details | `displayName`, `description`, `subagentType`, `tags`, `toolUses`, `tokens`, `durationMs`, `status:"background"`, `agentId` |
 | Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
-| Foreground result content | `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>` (plus the `Output file:` line — see differences) |
-| Foreground details | Same as background plus `turnCount`, `maxTurns`, `status` terminal |
 | Notification | `subagent-notification`, the `<task-notification>` XML (incl. `<context_percent>`), the `Full transcript available at:` footer, `NotificationDetails`, delivered `{ deliverAs: "followUp", triggerTurn: true }` |
 | `get_subagent_result` | Summary text and `details: null` |
 | Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered` — Paseo maps `completed`→completed, `error`→failed, `aborted`/`stopped`→canceled, else running |
@@ -57,7 +55,7 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | Transcript file | `.output` text file under a `/tmp/pi-subagents-*` directory | Pi session JSONL under `<agentDir>/subagents/<run-id>/` | Spec §8 uses the session file |
 | Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
 | Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |
-| Foreground transcript pointer | No `Output file:` line on the foreground result | Appends the `Output file:` line so Paseo can attach the finished foreground child's transcript | Spec §8; Paseo reads the line from the spawn result only |
+| Spawn mode | Foreground (blocking, inline result) and background | Always background; `run_in_background` is accepted but ignored (the result notes the deprecation); block for the result with `get_subagent_result { agent_id, wait: true }` | Only a background spawn exposes the transcript path at spawn time, so Paseo can stream the child live |
 | Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
 | Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
 
@@ -86,9 +84,10 @@ conventions even when the parent run suppressed them.
   operator-approved refs.
 - **Completion notifications.** Terminal `subagent-notification` messages use
   tintinweb's `{ deliverAs: "followUp", triggerTurn: true }` delivery.
-- **Transcript visibility.** The background spawn result carries one unadorned
-  `Output file: <path>` line. Child sessions persist to their own JSONL file
-  under `<agentDir>/subagents/<run-id>/`.
+- **Transcript visibility.** Every child runs in the background, so the spawn
+  result carries one unadorned `Output file: <path>` line and Paseo streams it
+  live. Child sessions persist to their own JSONL file under
+  `<agentDir>/subagents/<run-id>/`.
 
 ## Agent definitions
 
@@ -107,7 +106,7 @@ Any name is allowed; the filename is the agent type. The frontmatter follows the
 | `max_turns` | unlimited | Soft cap, then a five-turn grace window before abort |
 | `prompt_mode` | `append` | `append` wraps the body in `<agent_instructions>`; `replace` appends it raw |
 | `inherit_context` | `false` | Not supported in v1; `true` refuses admission |
-| `run_in_background` | `false` | Default background mode for this agent |
+| `run_in_background` | ignored | Accepted for compatibility; children always run in the background |
 | `locked` | — | `true` withholds every field the file sets; a list withholds the named fields (`model`, `thinking`, `max_turns`, `inherit_context`, `run_in_background`) |
 | `enabled` | `true` | `false` disables the definition |
 | `extensions` | inherit approved | Approved extension refs; `[]` selects none |

@@ -340,9 +340,9 @@ export async function spawnSubagent(
 		maxTurns: request.invocation.maxTurns,
 		modelName,
 		tags: buildTags(request.definition, request.invocation),
-		initialStatus: request.invocation.runInBackground
-			? "background"
-			: "running",
+		// Every child is a background session so Paseo learns its transcript path
+		// at spawn and streams it live.
+		initialStatus: "background",
 	});
 
 	const sessionManager = createChildSessionManager(request.cwd, agentDir, id);

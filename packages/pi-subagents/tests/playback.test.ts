@@ -96,6 +96,18 @@ function parseTokens(text: string): {
 	return { input: total, output: 0, total };
 }
 
+/**
+ * The background result's guidance line deliberately differs from tintinweb's:
+ * every child is background, so we tell the model how to block for the result.
+ * Mask it so the rest of the recorded content is still compared byte for byte.
+ */
+function normalizeGuidance(text: string): string {
+	return text.replace(
+		/Use get_subagent_result[^\n]*/g,
+		"Use get_subagent_result …",
+	);
+}
+
 function stripUndefined(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(stripUndefined);
 	if (value && typeof value === "object") {
@@ -165,9 +177,10 @@ function replay(label: string): void {
 	bgRun.resultText = parseTag(notifContent, "result");
 	bgRun.contextPercent = Number(parseTag(notifContent, "context_percent"));
 
-	expect(buildBackgroundResultText(bgRun), `${label}: bg content`).toBe(
-		bgEnd.result.content[0].text,
-	);
+	expect(
+		normalizeGuidance(buildBackgroundResultText(bgRun)),
+		`${label}: bg content`,
+	).toBe(normalizeGuidance(bgEnd.result.content[0].text));
 	expect(
 		stripUndefined(buildBackgroundDetails(bgRun)),
 		`${label}: bg details`,

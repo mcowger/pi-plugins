@@ -9,6 +9,7 @@ import {
 	formatTaskNotification,
 	formatTokens,
 	outputFileLine,
+	RUN_IN_BACKGROUND_NOTE,
 } from "../src/transcript.js";
 import { SubagentRun } from "../src/run.js";
 
@@ -47,6 +48,16 @@ describe("transcript wire shapes", () => {
 		expect(text).toContain("Type: explore");
 		expect(text).toContain("Description: cmp background");
 		expect(text).toContain("Do not duplicate this agent's work.");
+	});
+
+	it("prepends the deprecation note when the caller passed run_in_background", () => {
+		const text = buildBackgroundResultText(makeRun(), {
+			note: RUN_IN_BACKGROUND_NOTE,
+		});
+		expect(text.startsWith(RUN_IN_BACKGROUND_NOTE)).toBe(true);
+		expect(WIRE_REGEX.exec(text)?.[1]).toBe(
+			"/tmp/pi-example/subagent-9f2a.jsonl",
+		);
 	});
 
 	it("background details match tintinweb's immediate-launch shape", () => {

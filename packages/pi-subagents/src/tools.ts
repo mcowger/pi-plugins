@@ -18,12 +18,10 @@ import { getRunRegistry, type SubagentRun } from "./run.js";
 import { isToolAllowed } from "./selectors.js";
 import { spawnSubagent } from "./runtime.js";
 import {
-	buildAgentDetails,
 	buildBackgroundDetails,
 	buildBackgroundResultText,
 	buildCreatedEvent,
 	buildEventData,
-	buildForegroundResultText,
 	buildGetResultText,
 	buildNotFoundText,
 	buildNotificationDetails,
@@ -32,6 +30,7 @@ import {
 	buildSteerNotRunningText,
 	buildSteerSentText,
 	formatTaskNotification,
+	RUN_IN_BACKGROUND_NOTE,
 } from "./transcript.js";
 import type { AgentDefinition, Lineage, OperatorConfig } from "./types.js";
 
@@ -136,7 +135,10 @@ const SPAWN_PARAMETERS = Type.Object(
 			description: "Short human-facing description",
 		}),
 		run_in_background: Type.Optional(
-			Type.Boolean({ description: "Return immediately; default false" }),
+			Type.Boolean({
+				description:
+					"Deprecated and ignored: every child runs in the background so its transcript can stream. Use get_subagent_result with wait: true to block for the result.",
+			}),
 		),
 		model: Type.Optional(
 			Type.String({
@@ -201,8 +203,8 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 		name: AGENT_TOOL_NAME,
 		label: "Agent",
 		description:
-			"Spawn exactly one subagent child and return its run id. Use independent background calls for parallelism.",
-		promptSnippet: "Spawn one subagent child",
+			"Spawn exactly one subagent child in the background and return its run id and transcript path. The child runs while you continue; a completion notification wakes you. Use get_subagent_result with wait: true to block for the result, or independent calls for parallelism.",
+		promptSnippet: "Spawn one background subagent child",
 		// Orchestration tools are declared to the model but never callable through codemode.
 		exposure: "model-only" as const,
 		parameters: SPAWN_PARAMETERS,
@@ -230,6 +232,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 				subagent_type: string;
 				prompt: string;
 				description: string;
+				/** Accepted for compatibility; every child runs in the background. */
 				run_in_background?: boolean;
 				model?: string;
 				thinking?: string;
@@ -259,8 +262,11 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 			const invocation = resolveInvocation(definition, {
 				model: params.model,
 				thinking: params.thinking,
-				run_in_background: params.run_in_background,
 			});
+			// Every child is a background session: only then does Paseo learn the
+			// transcript path at spawn time and stream it live. Callers that want a
+			// blocking inline result use get_subagent_result's `wait`.
+			invocation.runInBackground = true;
 			if (invocation.inheritContext) {
 				throw new AgentAdmissionError(
 					`agent "${definition.name}" sets inherit_context: true, which is not supported in v1`,
@@ -290,49 +296,47 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 				includedTools,
 				excludedTools: cleanList(params.excluded_tools, "excluded_tools"),
 				extensions: cleanList(params.extensions, "extensions"),
-				onTerminal: invocation.runInBackground
-					? (finished) => {
-							const failed =
-								finished.status === "error" ||
-								finished.status === "stopped" ||
-								finished.status === "aborted";
-							deps.emitEvent(
-								failed ? "subagents:failed" : "subagents:completed",
-								buildEventData(finished),
-							);
-							const footer = finished.outputFile
-								? `\nFull transcript available at: ${finished.outputFile}`
-								: "";
-							deps.sendMessage(
-								{
-									customType: "subagent-notification",
-									content: formatTaskNotification(finished, 500) + footer,
-									display: true,
-									details: buildNotificationDetails(finished, 500),
-								},
-								{ deliverAs: "followUp", triggerTurn: true },
-							);
-						}
-					: undefined,
+				onTerminal: (finished) => {
+					const failed =
+						finished.status === "error" ||
+						finished.status === "stopped" ||
+						finished.status === "aborted";
+					deps.emitEvent(
+						failed ? "subagents:failed" : "subagents:completed",
+						buildEventData(finished),
+					);
+					const footer = finished.outputFile
+						? `\nFull transcript available at: ${finished.outputFile}`
+						: "";
+					deps.sendMessage(
+						{
+							customType: "subagent-notification",
+							content: formatTaskNotification(finished, 500) + footer,
+							display: true,
+							details: buildNotificationDetails(finished, 500),
+						},
+						{ deliverAs: "followUp", triggerTurn: true },
+					);
+				},
 				onChildCreated: (childSessionId) =>
 					deps.emitChildCreated(state.lineage.sessionId, childSessionId),
 				onChildDisposed: (childSessionId) =>
 					deps.emitChildDisposed(childSessionId),
 			});
 
-			if (invocation.runInBackground) {
-				deps.emitEvent("subagents:created", buildCreatedEvent(run));
-			}
+			deps.emitEvent("subagents:created", buildCreatedEvent(run));
 			deps.emitEvent("subagents:started", buildStartedEvent(run));
 
-			if (invocation.runInBackground) {
-				return textResult(
-					buildBackgroundResultText(run),
-					buildBackgroundDetails(run),
-				);
-			}
-			await run.settled;
-			return textResult(buildForegroundResultText(run), buildAgentDetails(run));
+			// If the caller still passed the deprecated flag, start the agent in the
+			// background anyway and say so in the result.
+			const note =
+				params.run_in_background === undefined
+					? undefined
+					: RUN_IN_BACKGROUND_NOTE;
+			return textResult(
+				buildBackgroundResultText(run, { note }),
+				buildBackgroundDetails(run),
+			);
 		},
 	};
 }
@@ -342,7 +346,7 @@ export function buildGetResultTool() {
 		name: GET_RESULT_TOOL_NAME,
 		label: "Get subagent result",
 		description:
-			"Check status and retrieve results from a background agent. Use the agent ID returned by Agent with run_in_background.",
+			"Check status and retrieve results from a subagent. Use the agent ID returned by Agent. Set wait: true to block until the child finishes and return its result.",
 		exposure: "model-only" as const,
 		parameters: GET_RESULT_PARAMETERS,
 		async execute(

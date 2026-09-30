@@ -239,12 +239,17 @@ export function formatTaskNotification(
 // Tool result text
 // ---------------------------------------------------------------------------
 
+/** Guidance returned when the caller still passes the ignored `run_in_background`. */
+export const RUN_IN_BACKGROUND_NOTE =
+	"Note: run_in_background is deprecated and ignored; every child runs in the background so its transcript can stream. Use get_subagent_result with wait: true to block for the result.";
+
 export function buildBackgroundResultText(
 	run: SubagentRun,
-	options: { queued?: boolean; maxConcurrent?: number } = {},
+	options: { queued?: boolean; maxConcurrent?: number; note?: string } = {},
 ): string {
 	const queued = options.queued === true;
 	return (
+		(options.note ? `${options.note}\n\n` : "") +
 		`Agent ${queued ? "queued" : "started"} in background.\n` +
 		`Agent ID: ${run.id}\n` +
 		`Type: ${run.displayName}\n` +
@@ -254,7 +259,7 @@ export function buildBackgroundResultText(
 			? `Position: queued (max ${options.maxConcurrent ?? 0} concurrent)\n`
 			: "") +
 		`\nYou will be notified when this agent completes.\n` +
-		`Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
+		`Use get_subagent_result with wait: true to block for the result, or steer_subagent to send it messages.\n` +
 		`Do not duplicate this agent's work.`
 	);
 }
