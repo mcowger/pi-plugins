@@ -142,6 +142,8 @@ describe("transcript wire shapes", () => {
 		expect(text).toContain("completed");
 		expect(text).toContain("pong");
 		expect(text).not.toContain("<");
+		// Paseo merges it with the parent's preceding text; lead with a blank line.
+		expect(text.startsWith("\n\n")).toBe(true);
 	});
 
 	it("truncates an oversized summary and points at get_subagent_result", () => {

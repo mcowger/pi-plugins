@@ -208,8 +208,9 @@ export function buildNotificationDetails(
  * summary, delivered in full while it fits inside `NOTIFICATION_RESULT_LIMIT`.
  *
  * Paseo renders a custom message's text as a timeline item in addition to the
- * adapter mapping, so the content is plain text (no XML); the structured fields
- * live in `details`, which is what Paseo's adapter reads.
+ * adapter mapping and merges it with the parent's preceding assistant text, so
+ * the content is plain text (no XML) and leads with a blank line. The structured
+ * fields live in `details`, which is what Paseo's adapter reads.
  */
 export function buildNotificationText(run: SubagentRun): string {
 	const label = run.description?.trim() || run.displayName || run.id;
@@ -233,14 +234,20 @@ export function buildNotificationText(run: SubagentRun): string {
 		header = `Agent "${label}" completed${steered}${stats}.`;
 	}
 	const result = run.resultText?.trim();
-	if (!result) return header;
-	if (result.length <= NOTIFICATION_RESULT_LIMIT)
-		return `${header}\n\n${result}`;
-	return (
-		`${header}\n\n${result.slice(0, NOTIFICATION_RESULT_LIMIT)}\n\n` +
-		`...(final response truncated at ${NOTIFICATION_RESULT_LIMIT} characters; ` +
-		"call get_subagent_result for the full output)"
-	);
+	let body: string;
+	if (!result) {
+		body = header;
+	} else if (result.length <= NOTIFICATION_RESULT_LIMIT) {
+		body = `${header}\n\n${result}`;
+	} else {
+		body =
+			`${header}\n\n${result.slice(0, NOTIFICATION_RESULT_LIMIT)}\n\n` +
+			`...(final response truncated at ${NOTIFICATION_RESULT_LIMIT} characters; ` +
+			"call get_subagent_result for the full output)";
+	}
+	// Lead with a blank line: Paseo concatenates consecutive assistant-message
+	// timeline items, so without it the notice runs into the parent's own text.
+	return `\n\n${body}`;
 }
 
 /**
