@@ -25,11 +25,11 @@ import {
 	buildGetResultText,
 	buildNotFoundText,
 	buildNotificationDetails,
+	buildNotificationText,
 	buildStartedEvent,
 	buildSteeredEvent,
 	buildSteerNotRunningText,
 	buildSteerSentText,
-	formatTaskNotification,
 	RUN_IN_BACKGROUND_NOTE,
 } from "./transcript.js";
 import type { AgentDefinition, Lineage, OperatorConfig } from "./types.js";
@@ -203,7 +203,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 		name: AGENT_TOOL_NAME,
 		label: "Agent",
 		description:
-			"Spawn exactly one subagent child in the background and return its run id and transcript path. The child runs while you continue; a completion notification wakes you. Use get_subagent_result with wait: true to block for the result, or independent calls for parallelism.",
+			"Spawn exactly one subagent child in the background and return its run id and transcript path. The child runs while you continue; a completion notification wakes you. Use get_subagent_result with wait: true to block for the result (that replaces the notification), or independent calls for parallelism.",
 		promptSnippet: "Spawn one background subagent child",
 		// Orchestration tools are declared to the model but never callable through codemode.
 		exposure: "model-only" as const,
@@ -305,13 +305,14 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 						failed ? "subagents:failed" : "subagents:completed",
 						buildEventData(finished),
 					);
-					const footer = finished.outputFile
-						? `\nFull transcript available at: ${finished.outputFile}`
-						: "";
+					// A caller already blocking on get_subagent_result { wait: true }
+					// gets the result as a tool result; waking the parent again would only
+					// burn a redundant turn.
+					if (finished.resultRequested) return;
 					deps.sendMessage(
 						{
 							customType: "subagent-notification",
-							content: formatTaskNotification(finished, 500) + footer,
+							content: buildNotificationText(finished),
 							display: true,
 							details: buildNotificationDetails(finished, 500),
 						},
@@ -356,7 +357,14 @@ export function buildGetResultTool() {
 			const agentId = requireNonEmpty(params.agent_id, "agent_id");
 			const run = getRunRegistry().get(agentId);
 			if (!run) return textResult(buildNotFoundText(agentId));
-			if (params.wait === true) await run.settled;
+			if (params.wait === true) {
+				// Claim before blocking: the notification fires from the terminal hook,
+				// which runs before this await resumes.
+				run.claimResult();
+				await run.settled;
+			} else if (run.terminal) {
+				run.claimResult();
+			}
 			// tintinweb's followup result carries text only; the Paseo adapter
 			// correlates by agent id from the spawn call.
 			return textResult(buildGetResultText(run));

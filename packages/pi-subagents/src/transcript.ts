@@ -203,6 +203,49 @@ export function buildNotificationDetails(
 	};
 }
 
+/**
+ * Completed notification text: a status line followed by the child's final
+ * summary, delivered in full while it fits inside `NOTIFICATION_RESULT_LIMIT`.
+ *
+ * Paseo renders a custom message's text as a timeline item in addition to the
+ * adapter mapping, so the content is plain text (no XML); the structured fields
+ * live in `details`, which is what Paseo's adapter reads.
+ */
+export function buildNotificationText(run: SubagentRun): string {
+	const label = run.description?.trim() || run.displayName || run.id;
+	let header: string;
+	if (run.status === "error") {
+		header = `Agent "${label}" failed: ${run.error ?? "unknown"}.`;
+	} else if (run.status === "stopped") {
+		header = `Agent "${label}" stopped.`;
+	} else if (run.status === "aborted") {
+		header = `Agent "${label}" aborted (turn limit).`;
+	} else {
+		const parts: string[] = [];
+		if (run.toolUses > 0)
+			parts.push(`${run.toolUses} tool use${run.toolUses === 1 ? "" : "s"}`);
+		const tokens = tokenString(run);
+		if (tokens) parts.push(tokens);
+		if (run.endedAt) parts.push(formatMs(run.endedAt - run.startedAt));
+		const stats = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+		const steered =
+			run.status === "steered" ? " (wrapped up at the turn limit)" : "";
+		header = `Agent "${label}" completed${steered}${stats}.`;
+	}
+	const result = run.resultText?.trim();
+	if (!result) return header;
+	if (result.length <= NOTIFICATION_RESULT_LIMIT)
+		return `${header}\n\n${result}`;
+	return (
+		`${header}\n\n${result.slice(0, NOTIFICATION_RESULT_LIMIT)}\n\n` +
+		`...(final response truncated at ${NOTIFICATION_RESULT_LIMIT} characters; ` +
+		"call get_subagent_result for the full output)"
+	);
+}
+
+/** Full-result budget for the completion notification before it points at the tool. */
+export const NOTIFICATION_RESULT_LIMIT = 10_000;
+
 /** Structured `<task-notification>` block, matching Claude Code's XML shape. */
 export function formatTaskNotification(
 	run: SubagentRun,
@@ -258,8 +301,8 @@ export function buildBackgroundResultText(
 		(queued
 			? `Position: queued (max ${options.maxConcurrent ?? 0} concurrent)\n`
 			: "") +
-		`\nYou will be notified when this agent completes.\n` +
-		`Use get_subagent_result with wait: true to block for the result, or steer_subagent to send it messages.\n` +
+		`\nYou will be notified when this agent completes, unless you block for it first:\n` +
+		`Use get_subagent_result with wait: true to block for the result (that also replaces the notification), or steer_subagent to send it messages.\n` +
 		`Do not duplicate this agent's work.`
 	);
 }

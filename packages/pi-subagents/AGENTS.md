@@ -36,12 +36,23 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 - **Details shape.** Background: `displayName`, `description`, `subagentType`,
   `tags`, `toolUses`, `tokens`, `durationMs`, `status`, `agentId`. Tag order is
   `twin`, `thinking: …`, `inherit context`, `background`, `max turns: …`.
-- **Notification.** Custom type `subagent-notification`; `<task-notification>`
-  XML (with `<context_percent>`), the `Full transcript available at:` footer, the
+- **Notification.** Custom type `subagent-notification`, the
   `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
-  Register a `subagent-notification` message renderer (using `Text` from
-  `@earendil-works/pi-tui`) so the transcript shows a concise block instead of
-  the raw XML content.
+  The content is a status line plus the child's **final summary**, delivered in
+  full while it fits in `NOTIFICATION_RESULT_LIMIT` (~10k chars); beyond that it
+  is truncated with a note to call `get_subagent_result`. It is plain text, not
+  tintinweb's `<task-notification>` XML: Paseo renders a custom message's text
+  as a timeline item, so XML would show verbatim. Paseo reads the structured
+  fields from `details`, not the content. The Pi TUI renderer registered in
+  `index.ts` is a nicety for non-Paseo use.
+- **A claimed result suppresses the notification.** `get_subagent_result` calls
+  `run.claimResult()` before it blocks (`wait: true`) or when it reads a terminal
+  run, so `onTerminal` skips the notification. A caller already blocking for the
+  result must not also pay a notification turn. `run.resultRequested` is the flag.
+- **Every child is told to end with a self-contained summary.**
+  `SUBAGENT_SUMMARY_INSTRUCTION` is appended to the child's system prompt
+  (`appendSystemPrompt`), because the final assistant text is what the parent
+  receives back.
 - **`get_subagent_result`.** Tintinweb summary text and `details: null`.
 - **Lifecycle events.** `subagents:created` / `started` / `completed` / `failed` /
   `steered` with tintinweb's payloads (built by `transcript.ts`).
@@ -69,6 +80,13 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 These are intentional and must remain. Do not "fix" them to match tintinweb; do
 update `tests/playback.test.ts` if the behavior changes on purpose.
 
+- **Notification content carries the result**, not tintinweb's
+  `<task-notification>` XML: a status line plus the child's final summary (full
+  up to `NOTIFICATION_RESULT_LIMIT`, then a truncation note). Paseo renders a
+  custom message's text as a timeline item. The structured fields still ride in
+  `details`.
+- **A claimed result suppresses the completion notification**, so blocking on
+  `get_subagent_result { wait: true }` costs one tool call, not an extra turn.
 - **Always background; `run_in_background` ignored.** tintinweb has foreground
   (blocking, inline result) and background; we always spawn background so Paseo
   can stream the child live. If the caller passes `run_in_background` anyway, the

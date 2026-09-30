@@ -5,6 +5,8 @@ import {
 	buildForegroundResultText,
 	buildGetResultText,
 	buildNotificationDetails,
+	buildNotificationText,
+	NOTIFICATION_RESULT_LIMIT,
 	escapeXml,
 	formatTaskNotification,
 	formatTokens,
@@ -130,6 +132,26 @@ describe("transcript wire shapes", () => {
 			outputFile: "/tmp/pi-example/subagent-9f2a.jsonl",
 			resultPreview: "pong",
 		});
+	});
+
+	it("includes the full final summary in the notification, plain text only", () => {
+		const run = makeRun();
+		run.transition("completed", { summary: "pong" });
+		const text = buildNotificationText(run);
+		expect(text).toContain("completed");
+		expect(text).toContain("pong");
+		expect(text).not.toContain("<");
+	});
+
+	it("truncates an oversized summary and points at get_subagent_result", () => {
+		const run = makeRun();
+		run.transition("completed", {
+			summary: "x".repeat(NOTIFICATION_RESULT_LIMIT + 10),
+		});
+		const text = buildNotificationText(run);
+		expect(text).toContain("truncated");
+		expect(text).toContain("get_subagent_result");
+		expect(text.length).toBeLessThan(NOTIFICATION_RESULT_LIMIT + 500);
 	});
 
 	it("escapes XML special characters", () => {

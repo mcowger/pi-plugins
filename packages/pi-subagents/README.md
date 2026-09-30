@@ -27,7 +27,7 @@ traces from both packages side by side (see `tests/fixtures/` and
 | Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` (the `get_subagent_result` guidance line differs — see differences) |
 | Background details | `displayName`, `description`, `subagentType`, `tags`, `toolUses`, `tokens`, `durationMs`, `status:"background"`, `agentId` |
 | Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
-| Notification | `subagent-notification`, the `<task-notification>` XML (incl. `<context_percent>`), the `Full transcript available at:` footer, `NotificationDetails`, delivered `{ deliverAs: "followUp", triggerTurn: true }` |
+| Notification | `subagent-notification` custom type, the `NotificationDetails` fields (id/status/outputFile/…), delivered `{ deliverAs: "followUp", triggerTurn: true }` (content and suppression differ — see differences) |
 | `get_subagent_result` | Summary text and `details: null` |
 | Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered` — Paseo maps `completed`→completed, `error`→failed, `aborted`/`stopped`→canceled, else running |
 | Lifecycle events | `subagents:created` / `started` / `completed` / `failed` / `steered` with tintinweb's payloads |
@@ -56,6 +56,9 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
 | Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |
 | Spawn mode | Foreground (blocking, inline result) and background | Always background; `run_in_background` is accepted but ignored (the result notes the deprecation); block for the result with `get_subagent_result { agent_id, wait: true }` | Only a background spawn exposes the transcript path at spawn time, so Paseo can stream the child live |
+| Notification content | `<task-notification>` XML block with the result and transcript footer | Status line plus the child's final summary, in full up to `NOTIFICATION_RESULT_LIMIT` (10k chars), then a truncation note pointing at `get_subagent_result`; structured fields stay in `details` | Paseo renders a custom message's text as a timeline item, so XML would be shown verbatim |
+| Notification timing | Always notifies on completion | Suppressed when `get_subagent_result` already claimed the result (`wait: true`, or a terminal read), so blocking never also costs a notification turn | Avoids the redundant wake-up turn |
+| Child summary | No built-in instruction | A fixed instruction is appended to the child's system prompt to end with a self-contained summary | The final assistant text is what the parent receives back |
 | Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
 | Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
 

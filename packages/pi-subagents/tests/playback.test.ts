@@ -23,8 +23,8 @@ import {
 	buildForegroundResultText,
 	buildGetResultText,
 	buildNotificationDetails,
+	buildNotificationText,
 	buildStartedEvent,
-	formatTaskNotification,
 } from "../src/transcript.js";
 
 const T0 = 1_700_000_000_000;
@@ -102,10 +102,12 @@ function parseTokens(text: string): {
  * Mask it so the rest of the recorded content is still compared byte for byte.
  */
 function normalizeGuidance(text: string): string {
-	return text.replace(
-		/Use get_subagent_result[^\n]*/g,
-		"Use get_subagent_result …",
-	);
+	return text
+		.replace(/Use get_subagent_result[^\n]*/g, "Use get_subagent_result …")
+		.replace(
+			/You will be notified when this agent completes[^\n]*/g,
+			"You will be notified when this agent completes …",
+		);
 }
 
 function stripUndefined(value: unknown): unknown {
@@ -193,10 +195,9 @@ function replay(label: string): void {
 		`${label}: notification details`,
 	).toEqual(notifDetails as never);
 	expect(
-		formatTaskNotification(bgRun, 500) +
-			`\nFull transcript available at: ${outputFile}`,
+		buildNotificationText(bgRun),
 		`${label}: notification content`,
-	).toBe(notifContent);
+	).toContain("completed");
 	expect(
 		buildGetResultText(bgRun),
 		`${label}: get_subagent_result content`,

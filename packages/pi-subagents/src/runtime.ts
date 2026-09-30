@@ -155,6 +155,16 @@ function agentInstructions(definition: AgentDefinition): string | undefined {
 		: body;
 }
 
+/**
+ * Every child closes with a summary: the completion notification (or
+ * `get_subagent_result`) delivers the child's final assistant text back to the
+ * parent, so that text must stand on its own.
+ */
+const SUBAGENT_SUMMARY_INSTRUCTION =
+	"Before finishing, write a concise summary of what you did and what you " +
+	"found. This final message is returned to the calling agent as your result, " +
+	"so make it self-contained and do not end on a bare tool call.";
+
 interface TrackState {
 	hardAborted: boolean;
 	softSteered: boolean;
@@ -355,6 +365,9 @@ export async function spawnSubagent(
 	run.outputFile = outputFile;
 
 	const instructions = agentInstructions(request.definition);
+	const systemPrompt = [instructions, SUBAGENT_SUMMARY_INSTRUCTION].filter(
+		(entry): entry is string => Boolean(entry),
+	);
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: request.cwd,
 		agentDir,
@@ -367,7 +380,7 @@ export async function spawnSubagent(
 			...extensionRefs,
 			resolveSelfExtensionPath(request.selfExtensionPath),
 		],
-		appendSystemPrompt: instructions ? [instructions] : undefined,
+		appendSystemPrompt: systemPrompt.length > 0 ? systemPrompt : undefined,
 	});
 	await resourceLoader.reload();
 

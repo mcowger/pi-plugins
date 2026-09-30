@@ -10,6 +10,7 @@
  *
  * Scenarios:
  *   contract    background/foreground/bad-type/followup (default)
+ *   wait        block on a child's result; no notification should fire (mine only)
  *   nested      child spawns a grandchild (this extension only)
  *   concurrent  three background children in one turn
  *   steer       steer a running background child
@@ -429,6 +430,43 @@ async function runContract(rpc: Rpc, tool: string): Promise<void> {
 	);
 }
 
+function toolResultText(record: Rec): string {
+	const result = record.result as Rec | undefined;
+	const content = result?.content as Array<{ text?: string }> | undefined;
+	return (content ?? []).map((block) => block.text ?? "").join("\n");
+}
+
+async function runWait(rpc: Rpc, tool: string): Promise<void> {
+	// Spawn a background child and immediately block for its result in the same
+	// turn. The waiter claims the result, so the completion notification (and its
+	// extra turn) must be suppressed.
+	await sendPrompt(
+		rpc,
+		"wait-1",
+		`Call the ${tool} tool exactly once with these arguments: ${agentArgs({
+			subagent_type: "sleeper",
+			prompt:
+				"Run bash with command 'sleep 5' and then reply with the single word pong.",
+			description: "waited child",
+			run_in_background: true,
+		})}. Then call the get_subagent_result tool exactly once with the agent_id from that result and wait: true. Then reply with the single word DONE and stop.`,
+	);
+	await sleep(2_000);
+	const notifications = rpc.records.filter(isNotification).length;
+	if (notifications > 0) {
+		throw new Error(`waited child still notified the parent ${notifications}x`);
+	}
+	const resultText = rpc.records
+		.filter(isToolEnd("get_subagent_result"))
+		.map(toolResultText)
+		.join("\n");
+	if (!resultText.includes("pong")) {
+		throw new Error(
+			"get_subagent_result wait did not return the child's result",
+		);
+	}
+}
+
 async function runNested(rpc: Rpc, tool: string): Promise<void> {
 	await sendPrompt(
 		rpc,
@@ -579,6 +617,8 @@ async function runScenario(rpc: Rpc, target: Target): Promise<void> {
 	switch (target.scenario) {
 		case "nested":
 			return runNested(rpc, target.tool);
+		case "wait":
+			return runWait(rpc, target.tool);
 		case "concurrent":
 			return runConcurrent(rpc, target.tool);
 		case "steer":

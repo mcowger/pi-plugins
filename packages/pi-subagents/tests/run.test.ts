@@ -34,4 +34,11 @@ describe("SubagentRun", () => {
 		r.lifetimeUsage.cacheWrite = 5;
 		expect(r.totalTokens).toBe(125);
 	});
+
+	it("records that a result was claimed", () => {
+		const r = run();
+		expect(r.resultRequested).toBe(false);
+		r.claimResult();
+		expect(r.resultRequested).toBe(true);
+	});
 });

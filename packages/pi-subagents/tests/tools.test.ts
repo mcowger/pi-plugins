@@ -108,6 +108,37 @@ describe("tool schemas", () => {
 	});
 });
 
+describe("get_subagent_result", () => {
+	it("claims the result while blocking so no notification fires", async () => {
+		const run = new SubagentRun({
+			id: "wait-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(run);
+		const pending = buildGetResultTool().execute("7", {
+			agent_id: "wait-test",
+			wait: true,
+		});
+		expect(run.resultRequested).toBe(true);
+		run.transition("completed", { summary: "pong" });
+		await pending;
+		expect(run.resultRequested).toBe(true);
+	});
+
+	it("claims a terminal result on a non-blocking read", async () => {
+		const run = new SubagentRun({
+			id: "poll-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		run.transition("completed", { summary: "pong" });
+		getRunRegistry().add(run);
+		await buildGetResultTool().execute("8", { agent_id: "poll-test" });
+		expect(run.resultRequested).toBe(true);
+	});
+});
+
 describe("steer_subagent", () => {
 	const run = new SubagentRun({
 		id: "steer-test",
