@@ -3,6 +3,27 @@ import { canSpawn, resolveLineage } from "./lineage.js";
 import { isToolAllowed } from "./selectors.js";
 import type { Lineage } from "./types.js";
 
+/**
+ * Reduce a session's active (declared) tool set to what its lineage permits.
+ *
+ * Applied at session start, before every request, and when MCP servers change,
+ * because codemode/tool_search and MCP direct tools activate after session
+ * start. The dispatch gate is the execution-time backstop for calls that bypass
+ * declarations (for example through `ctx.executeTool`).
+ */
+export function filterActiveTools(
+	active: readonly string[],
+	lineage: Lineage | undefined,
+): string[] {
+	if (!lineage) return [...active];
+	let names = [...active];
+	if (lineage.policy)
+		names = names.filter((name) => isToolAllowed(lineage.policy, name));
+	if (!canSpawn(lineage))
+		names = names.filter((name) => !SPAWNER_TOOL_NAMES.includes(name));
+	return names;
+}
+
 export interface GateDecision {
 	block: true;
 	reason: string;

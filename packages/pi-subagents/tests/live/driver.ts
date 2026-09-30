@@ -99,6 +99,7 @@ function prepareAgentDir(label: string, scenario: string): string {
 	mkdirSync(join(agentDir, "agents"), { recursive: true });
 	mkdirSync(join(agentDir, "extensions"), { recursive: true });
 	mkdirSync(join(ROOT, label, scenario, "sessions"), { recursive: true });
+	rmSync(join(ROOT, label, scenario, "probe.jsonl"), { force: true });
 
 	copyIfPresent(
 		join(BASELINE, "settings.json"),
@@ -125,8 +126,11 @@ function prepareAgentDir(label: string, scenario: string): string {
 	}
 	// Fault provider must be discoverable so both parent and child load it.
 	cpSync(FAULT_EXT, join(agentDir, "extensions", "fault-provider.ts"));
+	// Probe lives in the agent dir so the child loads it too and records its
+	// policy-filtered tool set.
+	cpSync(PROBE_EXT, join(agentDir, "extensions", "probe.ts"));
 
-	if (scenario === "mcp") {
+	if (scenario === "mcp" || scenario === "policy") {
 		copyIfPresent(join(BASELINE, "mcp.json"), join(agentDir, "mcp.json"));
 	} else {
 		writeFileSync(join(agentDir, "mcp.json"), '{"mcpServers":{}}\n');
@@ -238,7 +242,7 @@ class Rpc {
 			const timer = setTimeout(() => {
 				this.waiters.delete(waiter);
 				resolvePromise(undefined);
-			}, options.timeoutMs ?? 120_000);
+			}, options.timeoutMs ?? 30_000);
 			waiter.resolve = (value) => {
 				clearTimeout(timer);
 				resolvePromise(value);
@@ -377,7 +381,7 @@ async function runContract(rpc: Rpc, tool: string): Promise<void> {
 			run_in_background: true,
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await rpc.waitFor(isNotification, { timeoutMs: 90_000 });
+	await rpc.waitFor(isNotification, { timeoutMs: 30_000 });
 	await sendPrompt(
 		rpc,
 		"fg-1",
@@ -417,8 +421,8 @@ async function runNested(rpc: Rpc, tool: string): Promise<void> {
 			run_in_background: true,
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await waitNotifications(rpc, 1, 120_000);
-	await waitIdle(rpc, 120_000);
+	await waitNotifications(rpc, 1, 30_000);
+	await waitIdle(rpc, 30_000);
 }
 
 async function runConcurrent(rpc: Rpc, tool: string): Promise<void> {
@@ -433,8 +437,8 @@ async function runConcurrent(rpc: Rpc, tool: string): Promise<void> {
 		"conc-1",
 		`Call the ${tool} tool exactly three times in this one message, once per argument set, in parallel: ${agentArgs(calls)}. Do not call any other tool. After the three Agent calls return, reply with the single word DONE and stop immediately.`,
 	);
-	await waitNotifications(rpc, 1, 90_000);
-	await waitIdle(rpc, 120_000);
+	await waitNotifications(rpc, 1, 30_000);
+	await waitIdle(rpc, 30_000);
 }
 
 async function runSteer(rpc: Rpc, tool: string): Promise<void> {
@@ -449,15 +453,15 @@ async function runSteer(rpc: Rpc, tool: string): Promise<void> {
 			run_in_background: true,
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await rpc.waitFor(isToolEnd(tool), { timeoutMs: 120_000 });
+	await rpc.waitFor(isToolEnd(tool), { timeoutMs: 30_000 });
 	await sleep(5_000);
 	await sendPrompt(
 		rpc,
 		"steer-2",
 		"Call the steer_subagent tool exactly once with the agent_id from the background Agent result and message 'Stop sleeping and reply with the single word pong immediately.' Then reply with the single word DONE and stop.",
 	);
-	await waitNotifications(rpc, 1, 120_000);
-	await waitIdle(rpc, 120_000);
+	await waitNotifications(rpc, 1, 30_000);
+	await waitIdle(rpc, 30_000);
 }
 
 async function runError(rpc: Rpc, tool: string): Promise<void> {
@@ -481,8 +485,8 @@ async function runError(rpc: Rpc, tool: string): Promise<void> {
 			run_in_background: true,
 		})} Then reply with the single word DONE and stop.`,
 	);
-	await waitNotifications(rpc, 1, 120_000);
-	await waitIdle(rpc, 120_000);
+	await waitNotifications(rpc, 1, 30_000);
+	await waitIdle(rpc, 30_000);
 }
 
 async function runAbort(rpc: Rpc, tool: string): Promise<void> {
@@ -496,8 +500,8 @@ async function runAbort(rpc: Rpc, tool: string): Promise<void> {
 			run_in_background: true,
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await waitNotifications(rpc, 1, 150_000);
-	await waitIdle(rpc, 150_000);
+	await waitNotifications(rpc, 1, 40_000);
+	await waitIdle(rpc, 40_000);
 }
 
 async function runMcp(rpc: Rpc, tool: string): Promise<void> {
@@ -514,8 +518,26 @@ async function runMcp(rpc: Rpc, tool: string): Promise<void> {
 			excluded_tools: ["mcp__exa__web_fetch_exa"],
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await waitNotifications(rpc, 1, 150_000);
-	await waitIdle(rpc, 150_000);
+	await waitNotifications(rpc, 1, 40_000);
+	await waitIdle(rpc, 40_000);
+}
+
+async function runPolicy(rpc: Rpc, tool: string): Promise<void> {
+	// `explore` declares only read,bash,grep,find,ls; with real MCP configured the
+	// child must not gain codemode/tool_search/MCP tools anyway.
+	await sendPrompt(
+		rpc,
+		"policy-1",
+		`${spawnInstruction(tool, {
+			subagent_type: "explore",
+			prompt:
+				"Reply with exactly the word pong and nothing else. Do not call any tool.",
+			description: "policy probe",
+			run_in_background: true,
+		})} After the tool returns, reply with the single word DONE and stop.`,
+	);
+	await waitNotifications(rpc, 1, 30_000);
+	await waitIdle(rpc, 30_000);
 }
 
 async function runShutdown(rpc: Rpc, tool: string): Promise<void> {
@@ -529,7 +551,7 @@ async function runShutdown(rpc: Rpc, tool: string): Promise<void> {
 			run_in_background: true,
 		})} After the tool returns, reply with the single word DONE and stop.`,
 	);
-	await rpc.waitFor(isToolEnd(tool), { timeoutMs: 120_000 });
+	await rpc.waitFor(isToolEnd(tool), { timeoutMs: 30_000 });
 	await sleep(3_000);
 }
 
@@ -547,6 +569,8 @@ async function runScenario(rpc: Rpc, target: Target): Promise<void> {
 			return runAbort(rpc, target.tool);
 		case "mcp":
 			return runMcp(rpc, target.tool);
+		case "policy":
+			return runPolicy(rpc, target.tool);
 		case "shutdown":
 			return runShutdown(rpc, target.tool);
 		default:
@@ -593,12 +617,14 @@ const proc = Bun.spawn(
 		"--no-themes",
 		"--no-context-files",
 		"--extension",
-		PROBE_EXT,
-		"--extension",
 		target.extension,
 	],
 	{
-		env: { ...process.env, PI_CODING_AGENT_DIR: target.agentDir },
+		env: {
+			...process.env,
+			PI_CODING_AGENT_DIR: target.agentDir,
+			PI_LIVE_PROBE_FILE: join(ROOT, label, scenario, "probe.jsonl"),
+		},
 		stdin: "pipe",
 		stdout: "pipe",
 		stderr: "pipe",

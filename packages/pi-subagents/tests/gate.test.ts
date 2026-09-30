@@ -5,13 +5,69 @@ import {
 	SPAWNER_TOOL_NAMES,
 	STEER_TOOL_NAME,
 } from "../src/constants.js";
-import { decideToolCall, gateForSession } from "../src/gate.js";
+import {
+	decideToolCall,
+	filterActiveTools,
+	gateForSession,
+} from "../src/gate.js";
 import { getLineageRegistry } from "../src/lineage.js";
 import { resolveToolPolicy } from "../src/selectors.js";
 import type { Lineage } from "../src/types.js";
 
 const root: Lineage = { sessionId: "root", depth: 0, ceiling: 1 };
 const child: Lineage = { sessionId: "child", depth: 1, ceiling: 1 };
+
+describe("filterActiveTools", () => {
+	const active = [
+		"read",
+		"bash",
+		"grep",
+		"find",
+		"ls",
+		"codemode",
+		"tool_search",
+		"mcp__github__create_issue",
+		"mcp__exa__web_search_exa",
+		"Agent",
+		"get_subagent_result",
+		"steer_subagent",
+	];
+
+	it("strips codemode, tool_search, MCP tools, and the spawner at the ceiling", () => {
+		const child: Lineage = {
+			sessionId: "child",
+			depth: 1,
+			ceiling: 1,
+			policy: resolveToolPolicy(["read", "bash", "grep", "find", "ls"], []),
+		};
+		expect(filterActiveTools(active, child)).toEqual([
+			"read",
+			"bash",
+			"grep",
+			"find",
+			"ls",
+		]);
+	});
+
+	it("keeps the spawner below the ceiling and applies exclusions", () => {
+		const root: Lineage = {
+			sessionId: "root",
+			depth: 0,
+			ceiling: 1,
+			policy: resolveToolPolicy(undefined, ["write"]),
+		};
+		expect(
+			filterActiveTools(["read", "write", "codemode", "Agent"], root),
+		).toEqual(["read", "codemode", "Agent"]);
+	});
+
+	it("leaves an untracked session untouched", () => {
+		expect(filterActiveTools(["read", "codemode"], undefined)).toEqual([
+			"read",
+			"codemode",
+		]);
+	});
+});
 
 describe("decideToolCall", () => {
 	it("allows everything for an untracked session", () => {

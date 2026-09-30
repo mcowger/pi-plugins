@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -6,10 +7,14 @@ import type {
 /**
  * Live-harness probe extension.
  *
- * Loaded alongside the subagent extension under test so the harness sees the
- * cross-extension lifecycle events (`pi.events`) that are otherwise invisible in
- * the RPC stream. It forwards each one as an RPC `extension_ui_request` notify
- * prefixed with `PROBE`, which the driver records and the comparator reads.
+ * Loaded in every session (parent and child) via the isolated agent dir's
+ * `extensions/` directory. It does two things:
+ *
+ * 1. Records each session's active tool set to `PI_LIVE_PROBE_FILE` (one JSON
+ *    line per phase), so the harness can verify the frozen tool policy without
+ *    relying on the model to report its own toolset.
+ * 2. Forwards `pi.events` lifecycle signals as RPC `extension_ui_request`
+ *    notifications prefixed with `PROBE`.
  */
 
 const CHANNELS = [
@@ -24,12 +29,34 @@ const CHANNELS = [
 
 export default function probe(pi: ExtensionAPI) {
 	let ctx: ExtensionContext | undefined;
+
+	const record = (phase: string) => {
+		const file = process.env.PI_LIVE_PROBE_FILE;
+		if (!file) return;
+		try {
+			appendFileSync(
+				file,
+				`${JSON.stringify({
+					phase,
+					sessionId: ctx?.sessionManager.getSessionId(),
+					tools: pi.getActiveTools(),
+				})}\n`,
+			);
+		} catch {
+			// Best-effort observation channel.
+		}
+	};
+
 	pi.on("session_start", (_event, c) => {
 		ctx = c;
+		record("session_start");
 		ctx.ui.notify(
 			`PROBE active-tools: ${pi.getActiveTools().join(",")}`,
 			"info",
 		);
+	});
+	pi.on("before_agent_start", () => {
+		record("before_agent_start");
 	});
 	for (const channel of CHANNELS) {
 		pi.events.on(channel, (data) => {

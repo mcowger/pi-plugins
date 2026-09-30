@@ -48,6 +48,10 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   narrows; at the ceiling the spawner is removed and gate-blocked.
 - **Tool policy.** `included_tools` / `excluded_tools` freeze at admission and
   the `tool_call` gate enforces them for direct *and* codemode-nested calls.
+  Re-apply `filterActiveTools` on `session_start`, `before_agent_start`, and
+  `mcp_servers_change`, because codemode/tool_search and MCP direct tools
+  activate after session start; removing `Agent` at the ceiling disables its
+  `prepareLoadout`, so the re-filter is what keeps them undeclared.
 - **Child always loads this extension** (resolved self path) so the child's own
   gate exists. Do not remove `resolveSelfExtensionPath`.
 - **Transcript path is whitespace-free.** The Paseo reader matches

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import piSubagents from "../index.js";
 import { getLineageRegistry } from "../src/lineage.js";
+import { resolveToolPolicy } from "../src/selectors.js";
 
 interface FakeTool {
 	name: string;
@@ -16,6 +17,9 @@ function createFakePi() {
 	const active = new Set<string>([
 		"read",
 		"bash",
+		"grep",
+		"find",
+		"ls",
 		"Agent",
 		"get_subagent_result",
 		"steer_subagent",
@@ -137,6 +141,40 @@ describe("extension wiring", () => {
 		expect(allowed).toBeUndefined();
 
 		getLineageRegistry().delete(rootId);
+		getLineageRegistry().delete(childId);
+	});
+
+	it("re-applies the policy when tools activate after session_start", async () => {
+		const dir = await setupAgentDir(1);
+		const { pi, handlers, active } = createFakePi();
+		piSubagents(pi as never);
+
+		const childId = `child-late-${process.pid}`;
+		getLineageRegistry().register({
+			sessionId: childId,
+			depth: 1,
+			ceiling: 1,
+			policy: resolveToolPolicy(["read", "bash", "grep", "find", "ls"], []),
+		});
+		await handlers.get("session_start")?.(
+			{ type: "session_start" },
+			fakeContext(childId, dir),
+		);
+		expect([...active].sort()).toEqual(["bash", "find", "grep", "ls", "read"]);
+
+		// Simulate MCP/tool_search activating after session_start.
+		active.add("codemode");
+		active.add("tool_search");
+		active.add("mcp__github__create_issue");
+		await handlers.get("before_agent_start")?.(
+			{ type: "before_agent_start" },
+			fakeContext(childId, dir),
+		);
+		expect(active.has("codemode")).toBe(false);
+		expect(active.has("tool_search")).toBe(false);
+		expect(active.has("mcp__github__create_issue")).toBe(false);
+		expect(active.has("read")).toBe(true);
+
 		getLineageRegistry().delete(childId);
 	});
 });

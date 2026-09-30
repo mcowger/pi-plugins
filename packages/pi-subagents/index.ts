@@ -6,14 +6,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { defaultOperatorConfig, loadOperatorConfig } from "./src/config.js";
 import {
-	SPAWNER_TOOL_NAMES,
 	SUBAGENT_CHILD_DISPOSED,
 	SUBAGENT_CHILD_SESSION_CREATED,
 } from "./src/constants.js";
-import { gateForSession } from "./src/gate.js";
-import { canSpawn, getLineageRegistry, resolveLineage } from "./src/lineage.js";
+import { filterActiveTools, gateForSession } from "./src/gate.js";
+import { getLineageRegistry, resolveLineage } from "./src/lineage.js";
 import { getRunRegistry } from "./src/run.js";
-import { isToolAllowed } from "./src/selectors.js";
 import {
 	buildSubagentTools,
 	type SessionState,
@@ -59,6 +57,16 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		pi.registerTool(tool as ToolDefinition);
 	}
 
+	// The active set is the tools declared to the model. Re-apply the frozen
+	// policy whenever registrations can change it: at session start, before
+	// every request (MCP direct tools and codemode/tool_search activate after
+	// session_start), and when MCP servers connect.
+	function applyActiveToolPolicy(): void {
+		const state = sessionState;
+		if (!state) return;
+		pi.setActiveTools(filterActiveTools(pi.getActiveTools(), state.lineage));
+	}
+
 	pi.on("session_start", (_event, ctx: ExtensionContext) => {
 		sessionId = ctx.sessionManager.getSessionId();
 		const agentDir = getAgentDir();
@@ -79,25 +87,15 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			getLineageRegistry().register(lineage);
 		}
 		sessionState = { cwd: ctx.cwd, agentDir, config, lineage };
+		applyActiveToolPolicy();
+	});
 
-		// Frozen selectors restrict what the model sees. The dispatch gate enforces
-		// the same policy for code paths that bypass active declarations.
-		if (lineage.policy) {
-			pi.setActiveTools(
-				pi
-					.getActiveTools()
-					.filter((name) => isToolAllowed(lineage?.policy, name)),
-			);
-		}
+	pi.on("before_agent_start", () => {
+		applyActiveToolPolicy();
+	});
 
-		// At the ceiling the spawner is not exposed at all.
-		if (!canSpawn(lineage)) {
-			pi.setActiveTools(
-				pi
-					.getActiveTools()
-					.filter((name) => !SPAWNER_TOOL_NAMES.includes(name)),
-			);
-		}
+	pi.on("mcp_servers_change", () => {
+		applyActiveToolPolicy();
 	});
 
 	pi.on("tool_call", (event, ctx) => {
