@@ -646,7 +646,9 @@ export interface ControlsConfig {
 	 * BEFORE location-based policies. A "deny" here blocks the tool call
 	 * regardless of which tool is used (read, write, edit, bash, etc.).
 	 *
-	 * Patterns use minimatch globs (e.g. "*.env", "~/.ssh/*", "**&#47;secrets/**").
+	 * Patterns use minimatch globs matched against the basename and the full
+	 * canonical path (e.g. "*.env", "id_rsa*", "**&#47;.ssh/**"). `~` is not
+	 * expanded. Only "deny" has an effect.
 	 * This is the correct place to protect sensitive files from ALL tools.
 	 */
 	pathProtection?: Record<string, Action> | null;

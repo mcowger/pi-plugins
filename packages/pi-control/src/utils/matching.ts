@@ -4,7 +4,7 @@ import type { Action, Policy, Rule } from "../config.js";
 // ─── Glob helpers ───────────────────────────────────────────────────────────────
 
 /** Match a tool name against a tool glob pattern (e.g. "github_*"). */
-function matchTool(pattern: string, toolName: string): boolean {
+export function matchTool(pattern: string, toolName: string): boolean {
 	return minimatch(toolName, pattern, { nocase: false, dot: true });
 }
 

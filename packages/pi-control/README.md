@@ -20,6 +20,9 @@ When the agent tries to run a bash command, read a file, write to a path, or cal
   - [Nudge Timeout](#nudge-timeout)
   - [Auto Fallthrough](#auto-fallthrough)
   - [Locations](#locations)
+  - [Path Protection](#path-protection)
+  - [Tool Hiding](#tool-hiding)
+  - [Modes](#modes)
 - [Subagent Ask Forwarding](#subagent-ask-forwarding)
 - [Rule Matching and Specificity](#rule-matching-and-specificity)
 - [Multi-Target Resolution](#multi-target-resolution)
@@ -141,6 +144,12 @@ pi-controls loads config from two places and deep-merges them. **Project-local w
 | Project-local | `.pi/extensions/pi-controls.jsonc` (walks up from CWD) |
 
 Config files use **JSONC** (JSON with Comments), so `//` and `/* */` comments are supported. Plain `.json` is also accepted as a fallback.
+
+**Merge rules.** Objects merge key by key, so a project file can add or override a single policy, location, or `decisions` field. **Arrays replace rather than append:** if both files define a policy with the same name, the project's `rules` array replaces the global one (a `defaultAction` set only globally is kept). `approvalRules` is the exception: global and project lists are combined.
+
+**Project discovery.** The project file is found by walking up from the cwd, stopping at your home directory. The walk stops at the first `.pi/` directory it finds, so a nearer `.pi/` without a pi-controls file hides one further up.
+
+**Invalid files are ignored.** A file that fails to parse is skipped without an error. After editing, check the startup line in `~/.pi/agent/extensions/pi-controls.log` (`loaded: N policies, M locations, defaultPolicy=…`).
 
 See [`examples/sample.jsonc`](examples/sample.jsonc) for a fully annotated starting point.
 
@@ -438,13 +447,53 @@ The special key `"$cwd"` resolves dynamically to whatever directory pi was start
 }
 ```
 
-**Fallback:** if no location matches, the global `defaultPolicy` is used. If that is also unset (or `null`), the call proceeds unrestricted (fail-open).
+**Fallback:** if no location matches, the global `defaultPolicy` is used. If that is also unset (or `null`), the call proceeds unrestricted (fail-open). This applies per target, so a policy mapped only to `$cwd` does not cover `cat /etc/shadow`: `/etc` matches no location, and without a `defaultPolicy` it is unrestricted.
+
+A location (or `defaultPolicy`) that names a policy that does not exist is also unrestricted. It does not fall back to `defaultPolicy`, so check policy names for typos.
 
 ```json
 {
   "defaultPolicy": "relaxed"
 }
 ```
+
+### Path Protection
+
+`pathProtection` blocks paths for **every** tool. It is checked before any location policy, saved approval, or session allow, and it blocks even in `inform` mode. Use it for files that should never be touched, whatever tool the agent picks.
+
+```jsonc
+{
+  "pathProtection": {
+    "*.env":      "deny",
+    "id_rsa*":    "deny",
+    "*.pem":      "deny",
+    "**/.ssh/**": "deny"
+  }
+}
+```
+
+- Keys are [minimatch](https://github.com/isaacs/minimatch) globs matched against each target's basename **and** its full canonical (symlink-resolved) path, with dotfiles included.
+- `~` is **not** expanded in these globs. Use basename globs, `**/` globs, or absolute paths.
+- Only `"deny"` has an effect; other actions are ignored here.
+- File tools are checked against their `path`/`file_path`. For bash, every whitespace-separated token starting with `/`, `~`, or `.` is checked, as well as the parsed targets. So `cat .env` and `cat ~/.ssh/id_rsa` are caught, but a bare filename such as `cat secrets.env` is not.
+
+### Tool Hiding
+
+At the start of each agent turn, pi-controls removes from the agent's toolset any tool that **every active policy** denies. Active policies are all those referenced by `locations` or `defaultPolicy`. A `Hiding N universally-denied tools: …` notification is shown when this happens.
+
+Bash stays available whenever any active policy has a non-deny bash `pattern` rule (including `$safe-bash`) or a saved approval allowing a bash pattern, since some commands can still run. It is hidden only when no active policy can allow any bash command. Saved approvals likewise keep other tools visible.
+
+### Modes
+
+pi-controls has three modes, switched with `/controls <mode>` (alias `/pi-control`) or the `cycleKey` shortcut (default `ctrl+shift+m`):
+
+| Mode | Behavior |
+|------|----------|
+| `enforce` | Default. Verdicts are applied. |
+| `inform` | Every call is evaluated and the verdict shown as `would-deny`, `would-ask`, etc., but nothing is blocked (except `pathProtection`). Use it to preview a new config safely. |
+| `ignore` | pi-controls is off: no evaluation, no output, no Decisions API calls. |
+
+A non-default mode shows a `[pi-controls: INFORM]` / `[pi-controls: IGNORE]` widget. The mode resets to `enforce` on restart.
 
 ---
 
@@ -563,7 +612,7 @@ Each pipeline or logical stage (`|`, `&&`, `;`) is evaluated independently. The 
 
 ## Safe Command Patterns
 
-pi-controls ships a built-in preset, `"$safe-bash"`, that expands to ~140 allow rules for non-mutating bash commands. Use it anywhere in a `rules` array instead of listing the patterns by hand.
+pi-controls ships a built-in preset, `"$safe-bash"`, that expands to ~140 allow rules for non-mutating bash commands. Use it as the `pattern` of a bash rule instead of listing the patterns by hand.
 
 The preset covers:
 
@@ -577,11 +626,11 @@ The preset covers:
 | System info | `echo *`, `env`, `which *`, `ps *`, `uname *` |
 | Package info | `npm list *`, `pip show *`, `bun pm ls *` |
 
-The list is intentionally conservative. Commands that can mutate files under certain flags (e.g. `sed -i`, `awk` with output redirection) are excluded.
+The list is intentionally conservative. Commands that can mutate files under certain flags (e.g. `sed -i`, `awk` with output redirection) are excluded. `cd` is not in the preset either, so an allowlist policy that should permit `cd dir && …` needs its own `{ "action": "allow", "tool": "bash", "pattern": "cd *" }` rule.
 
 ### Usage
 
-Place `"$safe-bash"` as an entry in `rules`. It mixes freely with regular rule objects and expands in place:
+Use `"$safe-bash"` as the `pattern` of a bash rule. The rule expands in place to one rule per safe command, each keeping the rule's `action`, and it mixes freely with other rules. A bare `"$safe-bash"` string in `rules` is not expanded; it must be a rule object:
 
 ```jsonc
 {
@@ -1062,6 +1111,8 @@ Pair this with a strict `defaultAction: "deny"` policy to maximize the benefit: 
 | `defaultPolicy` | `string \| null` | No | Policy to apply when no location matches. `null` or absent = fail-open. |
 | `agentTimeout` | `AgentTimeout \| null` | No | Circuit breaker: escalate `deny` → `ask` when the deny rate exceeds the threshold. `null` or absent = disabled. |
 | `nudgeTimeout` | `NudgeTimeout \| null` | No | Circuit breaker: escalate `nudge` → `deny` when the same nudge rule is ignored too many times. `null` or absent = disabled. |
+| `pathProtection` | `Record<string, "deny"> \| null` | No | Globs blocked for every tool, checked before all policies. See [Path Protection](#path-protection). |
+| `cycleKey` | `string` | No | Shortcut that cycles [modes](#modes). Defaults to `ctrl+shift+m`. |
 | `decisions` | `DecisionsConfig \| null` | No | Decisions API configuration for [Eval Classification](#eval-classification) and the [Auto Fallthrough](#auto-fallthrough) action. `null` or absent = both disabled. |
 
 ### AgentTimeout fields

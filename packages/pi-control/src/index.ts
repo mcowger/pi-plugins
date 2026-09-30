@@ -9,7 +9,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { initBashParser } from "./utils/bash-ast.js";
 import { ForwardingManager } from "./utils/forwarding.js";
 import { logStartup } from "./utils/logger.js";
-import { matchRule } from "./utils/matching.js";
+import { universallyDeniedTools } from "./utils/tool-hiding.js";
 import {
 	getSubagentSessionRegistry,
 	subscribeSubagentLifecycle,
@@ -174,30 +174,8 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		if (mode === "ignore") return;
 		const config = loader.getConfig();
 
-		// Collect the set of active policies (those referenced by any
-		// location entry or used as the defaultPolicy).
-		const activePolicyNames = new Set(Object.values(config.locations));
-		if (config.defaultPolicy) {
-			activePolicyNames.add(config.defaultPolicy);
-		}
-
-		if (activePolicyNames.size === 0) return;
-
-		// Build the list: active policies that exist in config.
-		const activePolicies = [...activePolicyNames]
-			.filter((name) => name in config.policies)
-			.map((name) => config.policies[name]);
-
-		if (activePolicies.length === 0) return;
-
-		// A tool is "universally denied" if every active policy returns
-		// "deny" for that tool (no rule overrides to allow).
 		const activeTools = pi.getActiveTools();
-		const deniedTools = activeTools.filter((toolName) =>
-			activePolicies.every(
-				(policy) => matchRule(policy, toolName, null) === "deny",
-			),
-		);
+		const deniedTools = universallyDeniedTools(activeTools, config);
 
 		if (deniedTools.length > 0) {
 			const kept = activeTools.filter((t) => !deniedTools.includes(t));
