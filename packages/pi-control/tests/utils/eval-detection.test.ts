@@ -21,6 +21,7 @@ function stage(
 		embeddedSources,
 		pipedInput: false,
 		pipedOutput: false,
+		targetsResolved: true,
 	};
 }
 

@@ -1888,8 +1888,9 @@ describe("auto action via Decisions API", () => {
 				},
 			}),
 		);
+		// A custom tool names no path, so the model's `outside` stands.
 		const result = await handleToolCall(
-			lsEvent("auto-deny"),
+			toolEvent("custom_tool", "auto-deny", {}),
 			makeCtx("/tmp"),
 			autoConfig,
 		);
@@ -1897,6 +1898,31 @@ describe("auto action via Decisions API", () => {
 			block: true,
 			reason: expect.stringContaining("destructive-out-of-scope"),
 		});
+	});
+
+	it("resolves scope from the call's own path instead of the model", async () => {
+		stubOk(
+			autoAnswers({
+				destructive: { type: "noul", noul: 0.95 },
+				scope: {
+					type: "choice",
+					choice: "outside",
+					confidence: 0.9,
+					probabilities: { outside: 0.9, within: 0.1 },
+				},
+			}),
+		);
+		// `/tmp` is the cwd, so the path is `within`: destructive asks, not denies.
+		const ctx = makeCtx("/tmp");
+		const result = await handleToolCall(
+			lsEvent("auto-within"),
+			ctx,
+			autoConfig,
+		);
+		expect(result).toBeUndefined();
+		const selectMock = ctx.ui.select as ReturnType<typeof mock>;
+		expect(selectMock.mock.calls.length).toBe(1);
+		expect(String(selectMock.mock.calls[0][0])).toContain("destructive");
 	});
 
 	it("asks (and cites the rule) on a sensitive read", async () => {
@@ -1915,7 +1941,18 @@ describe("auto action via Decisions API", () => {
 		expect(result).toBeUndefined();
 		const selectMock = ctx.ui.select as ReturnType<typeof mock>;
 		expect(selectMock.mock.calls.length).toBe(1);
-		expect(String(selectMock.mock.calls[0][0])).toContain("sensitive-read");
+		const title = String(selectMock.mock.calls[0][0]);
+		expect(title).toContain(
+			"rule sensitive-read: data_sensitivity=sensitive (sensitive 0.90, ordinary 0.10)",
+		);
+		expect(title).toContain("scope=within (from paths)");
+		expect(title).toContain("targets: /tmp (within)");
+
+		// A cached repeat still explains itself.
+		await handleToolCall(lsEvent("auto-ask-2"), ctx, autoConfig);
+		expect(String(selectMock.mock.calls[1][0])).toContain(
+			"auto (cached): rule sensitive-read: data_sensitivity=sensitive",
+		);
 	});
 
 	it("caches repeat verdicts within the session", async () => {

@@ -324,13 +324,23 @@ The `auto` action is a final fallthrough that reasons about a tool call instead 
 }
 ```
 
-**What is sent.** The tool name, a normalized form of the input (bash command; write size plus a head/tail preview; edit changed regions; grep/find/ls fields; custom-tool JSON), the working directory, resolved targets, the tool description and schema from `pi.getAllTools()`, the current user prompt, and ~6 recent conversation turns (one-line summaries only). No matched policy or rules, and no redaction.
+**What is sent.** The tool name, a normalized form of the input (bash command; write size plus a head/tail preview; edit changed regions; grep/find/ls fields; custom-tool JSON), the working directory, resolved targets (each labelled `within`, `temporary`, `outside`, or `sensitive_system`), the tool description and schema from `pi.getAllTools()`, the current user prompt, and ~6 recent conversation turns (one-line summaries only). No matched policy or rules, and no redaction.
 
 **Data egress.** All of the above leaves your machine and is sent to the configured `decisions.url` (OpenRouter by default). There is no redaction, so secrets in a prompt, command, or file content are transmitted and are also written unredacted to `pi-controls.log`. Point `url` at an endpoint you trust, or leave `auto` disabled for sensitive repositories.
 
 **Questions.** Seven, answered in a single round trip: `action_class`, `scope`, and `data_sensitivity` (choice), plus `destructive`, `network`, `concealed`, and `inference_call` (boolean). The model is eyes; code decides.
 
-**Verdicts.** A `deny` requires one of four curated shapes: `destructive + out-of-scope`, `destructive + concealed`, `sensitive-data + network`, or `concealed + capability`. Everything else risky asks. A weighted-score backstop catches accumulated weak signals and can only ever ask, never deny. Set `"deny": false` to cap every auto verdict at `ask`.
+**Scope is resolved locally when possible.** When every path a call can touch is known (a `path` input on built-in tools, or a bash command whose arguments and redirects contain no expansions), pi-controls classifies those paths itself and replaces the model's `scope` answer: `within` the cwd, `temporary` (`/tmp`, `/var/tmp`, `/dev/shm`), `outside`, or `sensitive_system` (OS directories, credential stores such as `~/.ssh` and `~/.aws`, `.env`, key files). The riskiest target wins, and `/dev/null`-style sinks are ignored. A fully static bash command that names no paths keeps the model's `remote`/`not_applicable` answer, with an `unknown` collapsed to `not_applicable`. Anything else (expansions, custom tools with no path field) uses the model's answer unchanged. The trace records which one applied as `scopeSource` (`deterministic`, `fallback`, or `model`).
+
+**Verdicts.** A `deny` requires one of four curated shapes: `destructive + out-of-scope`, `destructive + concealed`, `sensitive-data + network + transmit` (a `remote_write`, or a `process_exec` that also touches a `sensitive_system` location), or `concealed + capability`. Everything else risky asks. A weighted-score backstop catches accumulated weak signals and can only ever ask, never deny. Set `"deny": false` to cap every auto verdict at `ask`.
+
+**Explanations.** An `auto` ask prompt or deny reason says why, not just which rule fired: the rule, the classifier's probabilities for the signal that drove it, the signals it did *not* find, where `scope` came from, and the targets. For example:
+
+```
+auto: rule sensitive-read: data_sensitivity=sensitive (sensitive 0.70, ordinary 0.25); other signals: destructive=no, network=no, concealed=no; scope=outside (from paths); targets: /home/me/.pi/agent/extensions/pi-controls.log (outside)
+```
+
+`uncertain-critical` lists each undecided dimension with its probabilities, and a backstop ask shows the score and its top contributions. Cached verdicts keep their explanation, prefixed `auto (cached):`.
 
 **Combination.** `auto` participates in the usual ranks: within a policy it loses same-specificity ties to explicit rules, and across targets it sits between `ask` and `log`. Explicit `deny`/`ask` rules therefore always win — `auto` is only ever the fallthrough.
 
@@ -1099,6 +1109,7 @@ All fields are optional and live under `decisions.auto`.
 | `choiceConfidence` | `number` | Choice top-label probability needed for a confident label. Defaults to `0.6`. |
 | `riskyMassThreshold` | `number` | Below confidence, risky-label mass at/above this → uncertain. Defaults to `0.35`. |
 | `backstopThreshold` | `number` | Weighted score at/above this → ask. Defaults to `40`. |
+| `thresholds` | `Record<string, { yes?, no? } \| { confidence?, riskyMass? }>` | Per-question bucket thresholds. Boolean questions (`destructive`, `network`, `concealed`, `inference_call`) take `yes`/`no`; choice questions (`action_class`, `scope`, `data_sensitivity`) take `confidence`/`riskyMass`. Unset entries use the globals above. Out-of-range values, and a `yes` not above `no`, fall back. |
 | `maxInputBytes` | `number` | Per normalized input field byte cap. Defaults to `16384`. |
 | `maxConversationTurns` | `number` | How many trailing conversation entries to send as grounding. Defaults to `6`. |
 | `maxConversationBytes` | `number` | Total byte cap over the conversation slice and the user prompt. Defaults to `8192`. |

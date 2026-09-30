@@ -46,6 +46,13 @@ export interface CommandStage {
 	pipedInput: boolean;
 	/** True when this stage's stdout is piped to the next stage (non-last stage in a `|` pipeline). */
 	pipedOutput: boolean;
+	/**
+	 * True when every argument and file-redirect destination was decoded
+	 * statically from a tree-sitter parse, so `pathArgs` and `redirectFiles`
+	 * name every path the stage can touch. False for expansions and for the
+	 * regex fallback.
+	 */
+	targetsResolved: boolean;
 }
 
 // ─── Module state ────────────────────────────────────────────────────────────
@@ -268,9 +275,10 @@ function redirectNodes(node: SyntaxNode): SyntaxNode[] {
 
 function extractRedirects(
 	redirects: SyntaxNode[],
-): Pick<CommandStage, "redirectFiles" | "embeddedSources"> {
+): Pick<CommandStage, "redirectFiles" | "embeddedSources" | "targetsResolved"> {
 	const redirectFiles: string[] = [];
 	const embeddedSources: EmbeddedSource[] = [];
+	let targetsResolved = true;
 
 	for (const redirect of redirects) {
 		if (redirect.type === "file_redirect") {
@@ -281,6 +289,7 @@ function extractRedirects(
 			if (!destination) continue;
 			const argument = argumentFromNode(destination);
 			if (argument.static) redirectFiles.push(argument.value);
+			else targetsResolved = false;
 			continue;
 		}
 		if (redirect.type === "heredoc_redirect") {
@@ -307,7 +316,7 @@ function extractRedirects(
 		}
 	}
 
-	return { redirectFiles, embeddedSources };
+	return { redirectFiles, embeddedSources, targetsResolved };
 }
 
 function buildStage(
@@ -338,7 +347,8 @@ function buildStage(
 		}
 	}
 
-	const { redirectFiles, embeddedSources } = extractRedirects(redirects);
+	const { redirectFiles, embeddedSources, targetsResolved } =
+		extractRedirects(redirects);
 	const pathArgs = pathArgsForCommand(args);
 
 	return {
@@ -347,6 +357,8 @@ function buildStage(
 		redirectFiles,
 		pathArgs,
 		embeddedSources,
+		targetsResolved:
+			targetsResolved && args.every((argument) => argument.static),
 		pipedInput,
 		pipedOutput,
 	};
@@ -438,6 +450,7 @@ function regexFallback(command: string): CommandStage[] {
 			embeddedSources: [],
 			pipedInput: false,
 			pipedOutput: false,
+			targetsResolved: false,
 		},
 	];
 }

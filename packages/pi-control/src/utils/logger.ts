@@ -12,6 +12,7 @@ import type {
 } from "./decisions.js";
 import type { AppliedAutoConfig, AutoBuckets } from "./auto-decisions.js";
 import type { AutoState } from "./auto-state.js";
+import type { ScopeSource } from "./scope.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const logPath = resolve(getAgentDir(), "extensions", "pi-controls.log");
@@ -96,7 +97,10 @@ export interface AutoClassifiedTrace {
 	kind: "auto-classified";
 	request: DecisionsRequestTrace<AutoState>;
 	response: DecisionsResponse;
-	evaluation: DecisionsEvaluationTrace<AutoBuckets, AppliedAutoConfig>;
+	evaluation: DecisionsEvaluationTrace<AutoBuckets, AppliedAutoConfig> & {
+		/** Whether `scope` came from resolved paths, a fallback, or the model. */
+		scopeSource: ScopeSource;
+	};
 	latencyMs: number;
 }
 

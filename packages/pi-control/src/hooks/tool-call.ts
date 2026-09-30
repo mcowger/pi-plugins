@@ -41,9 +41,10 @@ import {
 	classifyAuto,
 	getCachedAutoVerdict,
 	setCachedAutoVerdict,
-	verdictRationale as autoVerdictRationale,
 } from "../utils/auto-decisions.js";
+import { describeAutoVerdict } from "../utils/auto-explain.js";
 import { buildAutoState } from "../utils/auto-state.js";
+import { type LocalScope, localScopeFromTargets } from "../utils/scope.js";
 import type { AutoSkipReason, AutoTrace, EvalTrace } from "../utils/logger.js";
 
 /**
@@ -375,6 +376,7 @@ async function resolveAutoAction(args: {
 	toolName: string;
 	input: Record<string, unknown>;
 	targets: string[];
+	localScope?: LocalScope;
 	sessionAllowed: boolean;
 	evalClassified: boolean;
 	toolInfo?: ToolInfo;
@@ -385,6 +387,7 @@ async function resolveAutoAction(args: {
 		toolName,
 		input,
 		targets,
+		localScope,
 		sessionAllowed,
 		evalClassified,
 		toolInfo,
@@ -424,9 +427,9 @@ async function resolveAutoAction(args: {
 	const cached = getCachedAutoVerdict(key);
 	if (cached !== undefined) {
 		return {
-			action: cached,
-			note: `auto: cached ${cached}`,
-			trace: { kind: "auto-cached", key, verdict: cached },
+			action: cached.verdict,
+			note: `auto (cached): ${cached.explanation}`,
+			trace: { kind: "auto-cached", key, verdict: cached.verdict },
 		};
 	}
 
@@ -444,17 +447,22 @@ async function resolveAutoAction(args: {
 
 	const started = Date.now();
 	try {
-		const result = await classifyAuto({ state, sessionId }, decisions);
-		setCachedAutoVerdict(key, result.verdict);
+		const result = await classifyAuto(
+			{ state, sessionId, localScope },
+			decisions,
+		);
+		const explanation = describeAutoVerdict(result, state.targets);
+		setCachedAutoVerdict(key, { verdict: result.verdict, explanation });
 		return {
 			action: result.verdict,
-			note: `auto: ${autoVerdictRationale(result)}`,
+			note: `auto: ${explanation}`,
 			trace: {
 				kind: "auto-classified",
 				request: result.request,
 				response: result.response,
 				evaluation: {
 					buckets: result.buckets,
+					scopeSource: result.scopeSource,
 					appliedConfig: appliedAutoConfig(decisions.auto),
 					stage1: result.stage1,
 					stage2: result.stage2,
@@ -513,6 +521,7 @@ async function resolveCombinedAction(args: {
 	toolName: string;
 	input: Record<string, unknown>;
 	targets: string[];
+	localScope?: LocalScope;
 	sessionAllowed: boolean;
 	evalClassified: boolean;
 	toolInfo?: ToolInfo;
@@ -526,6 +535,7 @@ async function resolveCombinedAction(args: {
 		toolName: args.toolName,
 		input: args.input,
 		targets: args.targets,
+		localScope: args.localScope,
 		sessionAllowed: args.sessionAllowed,
 		evalClassified: args.evalClassified,
 		toolInfo: args.toolInfo,
@@ -538,10 +548,18 @@ async function resolveCombinedAction(args: {
 	};
 }
 
+const PATH_INPUT_KEYS = ["path", "file_path"] as const;
+
+/** True when the tool call names its target path explicitly. */
+function hasPathInput(event: ToolCallEvent): boolean {
+	const input = event.input as Record<string, unknown>;
+	return PATH_INPUT_KEYS.some((key) => typeof input[key] === "string");
+}
+
 function getTargetPaths(event: ToolCallEvent, cwd: string): string[] {
 	if (event.toolName === "bash") return [];
 	const input = event.input as Record<string, unknown>;
-	for (const key of ["path", "file_path"]) {
+	for (const key of PATH_INPUT_KEYS) {
 		if (typeof input[key] === "string") {
 			return [canonicalizePath(input[key] as string, cwd)];
 		}
@@ -1107,6 +1125,9 @@ export async function handleToolCall(
 			stageIndex: number;
 		}[] = [];
 		const targets: string[] = [];
+		// Paths the command actually names (no cwd placeholder for pathless
+		// stages), used to resolve the auto `scope` deterministically.
+		const namedTargets: string[] = [];
 		const policyNames = new Set<string>();
 		let policyName: string | null = null;
 		let approvalAllowed = false;
@@ -1119,6 +1140,7 @@ export async function handleToolCall(
 					),
 				),
 			];
+			namedTargets.push(...stageTargets);
 			if (stageTargets.length === 0) stageTargets.push(cwd);
 
 			for (const target of stageTargets) {
@@ -1232,6 +1254,11 @@ export async function handleToolCall(
 				toolName: "bash",
 				input: event.input as Record<string, unknown>,
 				targets: uniqueTargets,
+				// Any expansion or substitution means the named paths are not the
+				// whole story, so leave `scope` to the model.
+				localScope: stages.every((stage) => stage.targetsResolved)
+					? localScopeFromTargets(namedTargets, canonicalizePath(cwd, cwd))
+					: undefined,
 				sessionAllowed: bashSessionAllowed,
 				evalClassified,
 				toolInfo: toolInfo?.("bash"),
@@ -1402,6 +1429,9 @@ export async function handleToolCall(
 			toolName: event.toolName,
 			input: event.input as Record<string, unknown>,
 			targets,
+			localScope: hasPathInput(event)
+				? localScopeFromTargets(targets, canonicalizePath(cwd, cwd))
+				: undefined,
 			sessionAllowed: sessionAllows.has(
 				sessionAllowKey(event.toolName, null, targets),
 			),

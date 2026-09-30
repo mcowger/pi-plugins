@@ -758,17 +758,17 @@ export async function classifySource(
 
 const MAX_CACHE_ENTRIES = 200;
 
-export interface VerdictCache {
-	get(key: string): Verdict | undefined;
-	set(key: string, verdict: Verdict): void;
+export interface VerdictCache<T = Verdict> {
+	get(key: string): T | undefined;
+	set(key: string, value: T): void;
 	clear(): void;
 }
 
 /** FIFO verdict cache shared by eval classification and the `auto` action. */
-export function createVerdictCache(
+export function createVerdictCache<T = Verdict>(
 	maxEntries = MAX_CACHE_ENTRIES,
-): VerdictCache {
-	const store = new Map<string, Verdict>();
+): VerdictCache<T> {
+	const store = new Map<string, T>();
 	return {
 		get: (key) => store.get(key),
 		set: (key, verdict) => {

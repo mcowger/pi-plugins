@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resolveAuto } from "../../src/config.js";
 import {
+	annotateTargets,
 	AUTO_SCOPE_NOTE,
 	buildAutoState,
 	buildConversation,
@@ -211,6 +212,21 @@ describe("user prompt store", () => {
 	});
 });
 
+describe("annotateTargets", () => {
+	it("labels each target relative to the cwd and drops device sinks", () => {
+		expect(
+			annotateTargets(
+				["/nonexistent-root/proj/src", "/etc/hosts", "/dev/null", "/tmp/x"],
+				"/nonexistent-root/proj",
+			),
+		).toEqual([
+			{ path: "/nonexistent-root/proj/src", scope: "within" },
+			{ path: "/etc/hosts", scope: "sensitive_system" },
+			{ path: "/tmp/x", scope: "temporary" },
+		]);
+	});
+});
+
 describe("buildAutoState", () => {
 	beforeEach(() => clearPromptStore());
 	afterEach(() => clearPromptStore());
@@ -238,7 +254,9 @@ describe("buildAutoState", () => {
 		expect(state.tool).toBe("bash");
 		expect(state.input).toEqual({ command: "ls", command_truncated: false });
 		expect(state.cwd).toBe("/home/user/proj");
-		expect(state.targets).toEqual(["/home/user/proj"]);
+		expect(state.targets).toEqual([
+			{ path: "/home/user/proj", scope: "within" },
+		]);
 		expect(state.tool_description).toBe("Run a shell command");
 		expect(state.tool_schema).toEqual({ type: "object" });
 		expect(state.user_prompt).toBe("please deploy");

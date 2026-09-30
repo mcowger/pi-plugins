@@ -144,6 +144,39 @@ describe("resolveDecisions", () => {
 });
 
 describe("resolveAuto", () => {
+	it("fills per-question thresholds from the globals", () => {
+		const resolved = resolveAuto({ yesThreshold: 0.8, choiceConfidence: 0.7 });
+		expect(resolved.thresholds.destructive).toEqual({ yes: 0.8, no: 0.3 });
+		expect(resolved.thresholds.scope).toEqual({
+			confidence: 0.7,
+			riskyMass: DEFAULT_AUTO.riskyMassThreshold,
+		});
+	});
+
+	it("applies valid per-question overrides and ignores invalid ones", () => {
+		const resolved = resolveAuto({
+			thresholds: {
+				destructive: { yes: 0.5, no: 0.1 },
+				network: { yes: 0.2, no: 0.4 },
+				concealed: { yes: 2 },
+				scope: { confidence: 0.9, riskyMass: 0 },
+				bogus: { yes: 0.1 },
+			},
+		});
+		expect(resolved.thresholds.destructive).toEqual({ yes: 0.5, no: 0.1 });
+		expect(resolved.thresholds.network).toEqual(
+			DEFAULT_AUTO.thresholds.network,
+		);
+		expect(resolved.thresholds.concealed).toEqual(
+			DEFAULT_AUTO.thresholds.concealed,
+		);
+		expect(resolved.thresholds.scope).toEqual({
+			confidence: 0.9,
+			riskyMass: DEFAULT_AUTO.riskyMassThreshold,
+		});
+		expect(resolved.thresholds).not.toHaveProperty("bogus");
+	});
+
 	it("fills an absent or invalid block with code defaults", () => {
 		expect(resolveAuto(undefined)).toEqual(DEFAULT_AUTO);
 		expect(resolveAuto(null)).toEqual(DEFAULT_AUTO);

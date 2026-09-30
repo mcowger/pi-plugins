@@ -18,7 +18,6 @@ import {
 	getCachedAutoVerdict,
 	scoreBackstop,
 	setCachedAutoVerdict,
-	verdictRationale,
 	type AutoClassifyInput,
 } from "../../src/utils/auto-decisions.js";
 import type { AutoState } from "../../src/utils/auto-state.js";
@@ -70,7 +69,7 @@ function state(): AutoState {
 		tool: "bash",
 		input: { command: "ls", command_truncated: false },
 		cwd: "/home/user/proj",
-		targets: ["/home/user/proj"],
+		targets: [{ path: "/home/user/proj", scope: "within" }],
 		conversation: [],
 		scope_note: "scope",
 	};
@@ -186,6 +185,62 @@ describe("bucketAnswers", () => {
 		expect(probs.data_sensitivity).toEqual({ sensitive: 1 });
 	});
 
+	it("uses per-question thresholds over the globals", () => {
+		const config = resolveAuto({
+			thresholds: {
+				destructive: { yes: 0.5 },
+				scope: { confidence: 0.9 },
+			},
+		});
+		const { buckets } = bucketAnswers(
+			answers({
+				destructive: noul(0.55),
+				network: noul(0.55),
+				[AUTO_SCOPE_QUESTION]: choice("outside", {
+					outside: 0.8,
+					within: 0.2,
+				}),
+			}),
+			config,
+		);
+		expect(buckets.destructive).toBe("yes");
+		expect(buckets.network).toBe("uncertain");
+		expect(buckets.scope).toBe("uncertain");
+	});
+
+	it("overrides the model's scope with a deterministic one", () => {
+		const result = bucketAnswers(
+			answers({
+				[AUTO_SCOPE_QUESTION]: choice("outside", {
+					outside: 0.9,
+					within: 0.1,
+				}),
+			}),
+			testConfig(),
+			undefined,
+			{ kind: "paths", scope: "within" },
+		);
+		expect(result.buckets.scope).toBe("within");
+		expect(result.probs.scope).toEqual({ within: 1 });
+		expect(result.scopeSource).toBe("deterministic");
+	});
+
+	it("collapses an unknown scope to not_applicable when the call names no paths", () => {
+		const unknown = answers({
+			[AUTO_SCOPE_QUESTION]: choice("unknown", { unknown: 0.9 }),
+		});
+		const none = bucketAnswers(unknown, testConfig(), undefined, {
+			kind: "none",
+		});
+		expect(none.buckets.scope).toBe("not_applicable");
+		expect(none.scopeSource).toBe("fallback");
+		// Unresolvable paths leave the model's answer in place.
+		const model = bucketAnswers(unknown, testConfig());
+		expect(model.buckets.scope).toBe("unknown");
+		expect(model.probs.scope).toEqual({ unknown: 0.9 });
+		expect(model.scopeSource).toBe("model");
+	});
+
 	it("rejects missing and mistyped answers", () => {
 		const config = testConfig();
 		const missing = answers();
@@ -221,11 +276,52 @@ describe("applyStage1", () => {
 		});
 	});
 
-	it("denies the exfil shape (sensitive data + network)", () => {
+	it("denies the exfil shape (sensitive data + network + remote write)", () => {
 		expect(
 			ruleFor({
 				[AUTO_DATA_SENSITIVITY_QUESTION]: choice("sensitive", {
 					sensitive: 0.9,
+				}),
+				[AUTO_ACTION_CLASS_QUESTION]: choice("remote_write", {
+					remote_write: 0.9,
+				}),
+				network: noul(0.9),
+			}),
+		).toEqual({ verdict: "deny", rule: "exfil-shape" });
+	});
+
+	it("asks rather than denies when sensitive data and network lack a transmit action", () => {
+		expect(
+			ruleFor({
+				[AUTO_DATA_SENSITIVITY_QUESTION]: choice("sensitive", {
+					sensitive: 0.9,
+				}),
+				network: noul(0.9),
+			}),
+		).toEqual({ verdict: "ask", rule: "sensitive-read" });
+		// process_exec alone is not a transmit action…
+		expect(
+			ruleFor({
+				[AUTO_DATA_SENSITIVITY_QUESTION]: choice("sensitive", {
+					sensitive: 0.9,
+				}),
+				[AUTO_ACTION_CLASS_QUESTION]: choice("process_exec", {
+					process_exec: 0.9,
+				}),
+				network: noul(0.9),
+			}),
+		).toEqual({ verdict: "ask", rule: "sensitive-read" });
+		// …unless it also reaches a credential store or system location.
+		expect(
+			ruleFor({
+				[AUTO_DATA_SENSITIVITY_QUESTION]: choice("sensitive", {
+					sensitive: 0.9,
+				}),
+				[AUTO_ACTION_CLASS_QUESTION]: choice("process_exec", {
+					process_exec: 0.9,
+				}),
+				[AUTO_SCOPE_QUESTION]: choice("sensitive_system", {
+					sensitive_system: 0.9,
 				}),
 				network: noul(0.9),
 			}),
@@ -255,8 +351,8 @@ describe("applyStage1", () => {
 				[AUTO_DATA_SENSITIVITY_QUESTION]: choice("sensitive", {
 					sensitive: 0.9,
 				}),
-				[AUTO_ACTION_CLASS_QUESTION]: choice("process_exec", {
-					process_exec: 0.9,
+				[AUTO_ACTION_CLASS_QUESTION]: choice("remote_write", {
+					remote_write: 0.9,
 				}),
 			}),
 		).toEqual({ verdict: "deny", rule: "exfil-shape" });
@@ -462,60 +558,6 @@ describe("scoreBackstop", () => {
 });
 
 // ─── Rationale and questions ──────────────────────────────────────────────────
-
-describe("verdictRationale", () => {
-	it("cites the rule and active buckets", () => {
-		const { buckets } = bucketAnswers(
-			answers({
-				[AUTO_DATA_SENSITIVITY_QUESTION]: choice("sensitive", {
-					sensitive: 0.9,
-				}),
-				network: noul(0.9),
-			}),
-			testConfig(),
-		);
-		const rationale = verdictRationale({
-			buckets,
-			stage1: { verdict: "deny", rule: "exfil-shape" },
-			stage2: { score: 0, threshold: 40, breached: false, contributions: {} },
-		});
-		expect(rationale).toBe(
-			"rule exfil-shape: network=yes, data_sensitivity=sensitive",
-		);
-	});
-
-	it("prints < for a non-breaching backstop", () => {
-		const { buckets } = bucketAnswers(answers(), testConfig());
-		const rationale = verdictRationale({
-			buckets,
-			stage1: { verdict: null, rule: null },
-			stage2: {
-				score: 12,
-				threshold: 40,
-				breached: false,
-				contributions: { network: 12 },
-			},
-		});
-		expect(rationale).toBe("backstop score 12 < 40: network 12");
-	});
-
-	it("cites the score for the backstop", () => {
-		const { buckets } = bucketAnswers(answers(), testConfig());
-		const rationale = verdictRationale({
-			buckets,
-			stage1: { verdict: null, rule: null },
-			stage2: {
-				score: 52,
-				threshold: 40,
-				breached: true,
-				contributions: { scopeRisky: 30, concealed: 12, network: 10 },
-			},
-		});
-		expect(rationale).toBe(
-			"backstop score 52 ≥ 40: scopeRisky 30, concealed 12, network 10",
-		);
-	});
-});
 
 describe("buildQuestions", () => {
 	it("ships the seven universal questions", () => {
@@ -725,13 +767,18 @@ describe("auto verdict cache", () => {
 		expect(a).not.toBe(b);
 	});
 
-	it("stores, returns, and evicts verdicts", () => {
+	it("stores, returns, and evicts verdicts with their explanation", () => {
 		expect(getCachedAutoVerdict("k")).toBeUndefined();
-		setCachedAutoVerdict("k", "ask");
-		expect(getCachedAutoVerdict("k")).toBe("ask");
-		for (let i = 0; i < 200; i++) setCachedAutoVerdict(`k${i}`, "allow");
-		setCachedAutoVerdict("fresh", "deny");
+		setCachedAutoVerdict("k", { verdict: "ask", explanation: "why" });
+		expect(getCachedAutoVerdict("k")).toEqual({
+			verdict: "ask",
+			explanation: "why",
+		});
+		for (let i = 0; i < 200; i++) {
+			setCachedAutoVerdict(`k${i}`, { verdict: "allow", explanation: "" });
+		}
+		setCachedAutoVerdict("fresh", { verdict: "deny", explanation: "" });
 		expect(getCachedAutoVerdict("k0")).toBeUndefined();
-		expect(getCachedAutoVerdict("fresh")).toBe("deny");
+		expect(getCachedAutoVerdict("fresh")?.verdict).toBe("deny");
 	});
 });

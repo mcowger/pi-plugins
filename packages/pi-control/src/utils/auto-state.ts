@@ -16,15 +16,27 @@ import type {
 	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { AutoConfig } from "../config.js";
+import { canonicalizePath } from "./path.js";
+import { type CommandScope, classifyScope, isSinkPath } from "./scope.js";
 
 /** The read-only session view handed to extension contexts. */
 type ReadonlySessionManager = ExtensionContext["sessionManager"];
 
 export const AUTO_SCOPE_NOTE =
 	"Judge the tool call described by `tool`, `input`, `cwd`, and `targets`. " +
-	"The `user_prompt` and `conversation` fields are context for what the call " +
-	"is meant to accomplish — they do not add effects the call itself does not " +
-	"have.";
+	"`targets` lists the paths the call touches, already resolved against `cwd` " +
+	"and labelled `within` (the cwd or beneath it), `temporary`, `outside`, or " +
+	"`sensitive_system`. Read scope from those labels instead of re-deriving it " +
+	"from long absolute paths: a path labelled `within` is inside the project no " +
+	"matter how verbose it looks. The `user_prompt` and `conversation` fields " +
+	"are context for what the call is meant to accomplish — they do not add " +
+	"effects the call itself does not have.";
+
+/** One resolved target path and where it sits relative to the cwd. */
+export interface AutoTarget {
+	path: string;
+	scope: CommandScope;
+}
 
 export interface ConversationUserEntry {
 	role: "user";
@@ -53,7 +65,7 @@ export interface AutoState {
 	tool_description?: string;
 	tool_schema?: unknown;
 	cwd: string;
-	targets: string[];
+	targets: AutoTarget[];
 	user_prompt?: string;
 	conversation: ConversationEntry[];
 	scope_note: string;
@@ -390,6 +402,20 @@ export function normalizeToolInput(
 
 // ─── State assembly ───────────────────────────────────────────────────────────
 
+/**
+ * Label each canonical target relative to the canonical cwd. Device sinks
+ * (`/dev/null`) are dropped: they are not a place the call's effect lands.
+ */
+export function annotateTargets(
+	targets: readonly string[],
+	cwd: string,
+): AutoTarget[] {
+	const root = canonicalizePath(cwd, cwd);
+	return targets
+		.filter((path) => !isSinkPath(path))
+		.map((path) => ({ path, scope: classifyScope(path, root) }));
+}
+
 export interface BuildAutoStateInput {
 	toolName: string;
 	input: Record<string, unknown>;
@@ -417,7 +443,7 @@ export function buildAutoState(args: BuildAutoStateInput): AutoState {
 		tool: toolName,
 		input: normalizeToolInput(toolName, input, auto.maxInputBytes),
 		cwd,
-		targets,
+		targets: annotateTargets(targets, cwd),
 		conversation: buildConversation(
 			sessionManager,
 			auto.maxConversationTurns,

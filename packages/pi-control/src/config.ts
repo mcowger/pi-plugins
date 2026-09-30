@@ -62,6 +62,34 @@ export interface AutoWeights {
 	sensitiveData: number;
 }
 
+/** `noul` questions bucket on a probability: `>= yes`, `<= no`, else uncertain. */
+export interface NoulThresholds {
+	yes: number;
+	no: number;
+}
+
+/** Choice questions accept a top label at `confidence`, else escalate on `riskyMass`. */
+export interface ChoiceThresholds {
+	confidence: number;
+	riskyMass: number;
+}
+
+/**
+ * Per-question bucket thresholds for the auto evaluation. Each entry falls back
+ * to the matching global (`yesThreshold`, `noThreshold`, `choiceConfidence`,
+ * `riskyMassThreshold`), so a config that sets only the globals behaves as it
+ * did before per-question thresholds existed.
+ */
+export interface AutoThresholds {
+	action_class: ChoiceThresholds;
+	scope: ChoiceThresholds;
+	data_sensitivity: ChoiceThresholds;
+	destructive: NoulThresholds;
+	network: NoulThresholds;
+	concealed: NoulThresholds;
+	inference_call: NoulThresholds;
+}
+
 /** Per-question override for one auto question. */
 export interface AutoQuestionOverride {
 	instructions?: string;
@@ -85,6 +113,8 @@ export interface AutoConfig {
 	riskyMassThreshold: number;
 	/** Backstop score >= this → ask (the backstop never denies). */
 	backstopThreshold: number;
+	/** Resolved per-question thresholds (globals fill any unset entry). */
+	thresholds: AutoThresholds;
 	/** Per normalized input field size cap, in bytes. */
 	maxInputBytes: number;
 	/** How many trailing conversation entries to send as grounding. */
@@ -96,13 +126,38 @@ export interface AutoConfig {
 	questions: Record<string, AutoQuestionOverride>;
 }
 
-export const DEFAULT_AUTO: AutoConfig = {
-	deny: true,
+function thresholdsFromGlobals(globals: ThresholdConfig): AutoThresholds {
+	const choice = (): ChoiceThresholds => ({
+		confidence: globals.choiceConfidence,
+		riskyMass: globals.riskyMassThreshold,
+	});
+	const noul = (): NoulThresholds => ({
+		yes: globals.yesThreshold,
+		no: globals.noThreshold,
+	});
+	return {
+		action_class: choice(),
+		scope: choice(),
+		data_sensitivity: choice(),
+		destructive: noul(),
+		network: noul(),
+		concealed: noul(),
+		inference_call: noul(),
+	};
+}
+
+const DEFAULT_AUTO_GLOBALS: ThresholdConfig = {
 	yesThreshold: 0.7,
 	noThreshold: 0.3,
 	choiceConfidence: 0.6,
 	riskyMassThreshold: 0.35,
+};
+
+export const DEFAULT_AUTO: AutoConfig = {
+	deny: true,
+	...DEFAULT_AUTO_GLOBALS,
 	backstopThreshold: 40,
+	thresholds: thresholdsFromGlobals(DEFAULT_AUTO_GLOBALS),
 	maxInputBytes: 16384,
 	maxConversationTurns: 6,
 	maxConversationBytes: 8192,
@@ -360,6 +415,64 @@ function resolveAutoQuestionOverrides(
 	return overrides;
 }
 
+function probability(value: unknown): number | undefined {
+	return typeof value === "number" &&
+		Number.isFinite(value) &&
+		value >= 0 &&
+		value <= 1
+		? value
+		: undefined;
+}
+
+/**
+ * Merge per-question overrides over the resolved globals. Unknown question
+ * names, non-object entries, and out-of-range values fall back rather than
+ * throwing. A noul pair whose `yes` is not above `no` falls back as a pair, and
+ * a choice `confidence`/`riskyMass` of 0 is rejected as it is for the globals.
+ */
+export function resolveAutoThresholds(
+	raw: unknown,
+	globals: ThresholdConfig,
+): AutoThresholds {
+	const resolved = thresholdsFromGlobals(globals);
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		return resolved;
+	}
+	const source = raw as Record<string, unknown>;
+	const entry = (name: string): Record<string, unknown> | undefined => {
+		const value = source[name];
+		return value !== null && typeof value === "object" && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: undefined;
+	};
+	const positive = (value: unknown): number | undefined => {
+		const p = probability(value);
+		return p !== undefined && p > 0 ? p : undefined;
+	};
+
+	for (const name of ["action_class", "scope", "data_sensitivity"] as const) {
+		const values = entry(name);
+		if (!values) continue;
+		resolved[name] = {
+			confidence: positive(values.confidence) ?? resolved[name].confidence,
+			riskyMass: positive(values.riskyMass) ?? resolved[name].riskyMass,
+		};
+	}
+	for (const name of [
+		"destructive",
+		"network",
+		"concealed",
+		"inference_call",
+	] as const) {
+		const values = entry(name);
+		if (!values) continue;
+		const yes = probability(values.yes) ?? resolved[name].yes;
+		const no = probability(values.no) ?? resolved[name].no;
+		if (yes > no) resolved[name] = { yes, no };
+	}
+	return resolved;
+}
+
 /**
  * Resolve a raw (possibly partial) `decisions.auto` block over the code
  * defaults. Always returns a usable config — the `auto` action is enabled by
@@ -412,6 +525,7 @@ export function resolveAuto(raw: unknown): AutoConfig {
 			input.backstopThreshold,
 			defaults.backstopThreshold,
 		),
+		thresholds: resolveAutoThresholds(input.thresholds, thresholds),
 		maxInputBytes: validCount(input.maxInputBytes, defaults.maxInputBytes),
 		maxConversationTurns: validCount(
 			input.maxConversationTurns,

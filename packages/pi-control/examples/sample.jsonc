@@ -277,6 +277,12 @@
 			"riskyMassThreshold": 0.35,
 			"backstopThreshold": 40,
 
+			// Per-question thresholds; unset entries use the globals above.
+			// "thresholds": {
+			//   "destructive": { "yes": 0.6 },
+			//   "data_sensitivity": { "confidence": 0.7 }
+			// },
+
 			// Context limits: per-field input cap and conversation window.
 			"maxInputBytes": 16384,
 			"maxConversationTurns": 6,

@@ -19,6 +19,28 @@ describe("parseCommand", () => {
 		expect(stages[0].redirectFiles).toContain("/tmp/out.txt");
 	});
 
+	it("marks stages with only static words and redirects as resolved", async () => {
+		const [stage] = await parseCommand("cp ./a /tmp/b > /tmp/log");
+		expect(stage.targetsResolved).toBe(true);
+	});
+
+	it("marks expansions in arguments or redirects as unresolved", async () => {
+		expect((await parseCommand('rm -rf "$DIR"'))[0].targetsResolved).toBe(
+			false,
+		);
+		expect((await parseCommand("echo hi > $OUT"))[0].targetsResolved).toBe(
+			false,
+		);
+	});
+
+	it("keeps heredoc bodies out of path targets", async () => {
+		const [stage] = await parseCommand(
+			"git commit -F - <<'EOF'\nfix /etc/passwd handling\nEOF",
+		);
+		expect(stage.pathArgs).toEqual([]);
+		expect(stage.redirectFiles).toEqual([]);
+	});
+
 	it("parses a piped command into multiple stages", async () => {
 		const stages = await parseCommand("cat file.txt | grep foo");
 		expect(stages.length).toBeGreaterThanOrEqual(2);
