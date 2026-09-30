@@ -64,18 +64,31 @@ export default function probe(pi: ExtensionAPI) {
 		const file = process.env.PI_LIVE_PROBE_FILE;
 		if (!file) return;
 		try {
-			const payload = event.payload as
-				| { tools?: Array<{ name?: string; function?: { name?: string } }> }
-				| undefined;
-			const tools = (payload?.tools ?? [])
-				.map((tool) => tool.name ?? tool.function?.name)
+			const raw =
+				(
+					event.payload as
+						| {
+								tools?: Array<{
+									name?: string;
+									description?: string;
+									function?: { name?: string; description?: string };
+								}>;
+						  }
+						| undefined
+				)?.tools ?? [];
+			const nameOf = (tool: (typeof raw)[number]) =>
+				tool.name ?? tool.function?.name;
+			const tools = raw
+				.map(nameOf)
 				.filter((name): name is string => typeof name === "string");
+			const agent = raw.find((tool) => nameOf(tool) === "Agent");
 			appendFileSync(
 				file,
 				`${JSON.stringify({
 					phase: "provider_request",
 					sessionId: ctx?.sessionManager.getSessionId(),
 					tools,
+					agentDescription: agent?.description ?? agent?.function?.description,
 				})}\n`,
 			);
 		} catch {

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getRunRegistry, SubagentRun } from "../src/run.js";
 import { resolveToolPolicy } from "../src/selectors.js";
 import {
+	buildAgentCatalog,
 	buildAgentTool,
 	buildGetResultTool,
 	buildSteerTool,
@@ -75,6 +79,7 @@ describe("tool schemas", () => {
 					ceiling: 1,
 					policy: resolveToolPolicy(["read"], []),
 				},
+				trusted: false,
 			}),
 		};
 		const changes = buildAgentTool(deps).prepareLoadout?.({
@@ -96,6 +101,7 @@ describe("tool schemas", () => {
 					ceiling: 1,
 					policy: resolveToolPolicy(["read"], []),
 				},
+				trusted: false,
 			}),
 		};
 		const changes = buildAgentTool(deps).prepareLoadout?.({
@@ -105,6 +111,57 @@ describe("tool schemas", () => {
 			expect.arrayContaining(["Agent", "codemode"]),
 		);
 		expect(changes?.hiddenDeclarations).not.toContain("read");
+	});
+
+	it("lists agent names and descriptions in the Agent description", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-subagents-catalog-"));
+		const agents = join(dir, "agents");
+		mkdirSync(agents, { recursive: true });
+		writeFileSync(
+			join(agents, "explore.md"),
+			"---\ndescription: Read-only recon\n---\nBody\n",
+		);
+		writeFileSync(
+			join(agents, "worker.md"),
+			"---\ndescription: Implements plans\n---\nBody\n",
+		);
+		const deps = {
+			...noopDeps(),
+			getSessionState: () => ({
+				cwd: dir,
+				agentDir: dir,
+				config: { maxDepth: 1, approvedExtensions: {}, excludedExtensions: [] },
+				lineage: { sessionId: "s", depth: 0, ceiling: 1 },
+				trusted: false,
+			}),
+		};
+		const changes = buildAgentTool(deps).prepareLoadout?.({
+			declared: [{ name: "Agent" }],
+		} as never);
+		expect(changes?.descriptions?.Agent).toContain(
+			"- explore: Read-only recon",
+		);
+		expect(changes?.descriptions?.Agent).toContain(
+			"- worker: Implements plans",
+		);
+		expect(changes?.descriptions?.Agent).toContain("subagent_type");
+	});
+
+	it("omits disabled agents from the catalog", () => {
+		expect(
+			buildAgentCatalog(
+				new Map([
+					[
+						"off",
+						{
+							name: "off",
+							description: "disabled",
+							enabled: false,
+						} as never,
+					],
+				]),
+			),
+		).toBe("");
 	});
 });
 

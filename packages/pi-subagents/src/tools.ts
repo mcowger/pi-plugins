@@ -40,6 +40,8 @@ export interface SessionState {
 	agentDir: string;
 	config: OperatorConfig;
 	lineage: Lineage;
+	/** Whether the session is trusted to read project `.pi/agents/`. */
+	trusted: boolean;
 }
 
 export interface SendMessageOptions {
@@ -88,6 +90,7 @@ function currentState(
 			depth: 0,
 			ceiling: config.maxDepth,
 		},
+		trusted: ctx.isProjectTrusted(),
 	};
 }
 
@@ -110,6 +113,27 @@ function resolveDefinition(
 		);
 	}
 	return definition;
+}
+
+/**
+ * Model-facing catalog appended to the Agent tool description.
+ *
+ * Pi re-sends tool descriptions on every request and refreshes them through
+ * `prepareLoadout` when the active tool set changes, so the model always sees
+ * the available agents even after a long run or a compaction.
+ */
+export function buildAgentCatalog(
+	definitions: Map<string, AgentDefinition>,
+): string {
+	const entries = [...definitions.values()]
+		.filter((definition) => definition.enabled)
+		.sort((a, b) => a.name.localeCompare(b.name));
+	if (entries.length === 0) return "";
+	const lines = entries.map(
+		(definition) =>
+			`- ${definition.name}: ${definition.description ?? definition.name}`,
+	);
+	return `\n\nAvailable agents (pass the name as subagent_type):\n${lines.join("\n")}`;
 }
 
 function requireNonEmpty(value: unknown, field: string): string {
@@ -199,12 +223,18 @@ function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
 	} as AgentToolResult<unknown>;
 }
 
+const AGENT_TOOL_DESCRIPTION =
+	"Spawn exactly one subagent child in the background and return its run id " +
+	"and transcript path. The child runs while you continue; a completion " +
+	"notification wakes you. Use get_subagent_result with wait: true to block " +
+	"for the result (that replaces the notification), or independent calls for " +
+	"parallelism.";
+
 export function buildAgentTool(deps: SubagentToolDeps) {
 	return {
 		name: AGENT_TOOL_NAME,
 		label: "Agent",
-		description:
-			"Spawn exactly one subagent child in the background and return its run id and transcript path. The child runs while you continue; a completion notification wakes you. Use get_subagent_result with wait: true to block for the result (that replaces the notification), or independent calls for parallelism.",
+		description: AGENT_TOOL_DESCRIPTION,
 		promptSnippet: "Spawn one background subagent child",
 		// Orchestration tools are declared to the model but never callable through codemode.
 		exposure: "model-only" as const,
@@ -225,7 +255,23 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 			if (!canSpawn(state.lineage)) {
 				for (const name of SPAWNER_TOOL_NAMES) hidden.add(name);
 			}
-			return hidden.size > 0 ? { hiddenDeclarations: [...hidden] } : undefined;
+			const { definitions } = discoverAgentDefinitions({
+				agentDir: state.agentDir,
+				cwd: state.cwd,
+				trusted: state.trusted,
+			});
+			const catalog = buildAgentCatalog(definitions);
+			if (hidden.size === 0 && !catalog) return undefined;
+			return {
+				...(hidden.size > 0 ? { hiddenDeclarations: [...hidden] } : {}),
+				...(catalog
+					? {
+							descriptions: {
+								[AGENT_TOOL_NAME]: AGENT_TOOL_DESCRIPTION + catalog,
+							},
+						}
+					: {}),
+			};
 		},
 		async execute(
 			toolCallId: string,

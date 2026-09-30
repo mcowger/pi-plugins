@@ -132,7 +132,13 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			lineage = { sessionId, depth: 0, ceiling: config.maxDepth };
 			getLineageRegistry().register(lineage);
 		}
-		sessionState = { cwd: ctx.cwd, agentDir, config, lineage };
+		sessionState = {
+			cwd: ctx.cwd,
+			agentDir,
+			config,
+			lineage,
+			trusted: ctx.isProjectTrusted(),
+		};
 		applyActiveToolPolicy();
 	});
 

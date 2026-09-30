@@ -49,6 +49,7 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | Tool policy | Definition `tools`/`disallowed_tools` allowlist and an `isolated` flag | Definition `tools` allowlist plus frozen per-call `included_tools`/`excluded_tools`, enforced by a dispatch gate for direct and codemode-nested calls | Spec §10 |
 | Extension passing | Children inherit every parent extension | Children always get MCP/codemode/tool_search and only operator-approved refs named by `extensions` | Spec §11 |
 | `Agent` schema extras | Accepts `max_turns`, `resume`, `isolated`, `inherit_context`, `isolation`, `schedule` | Accepts `included_tools`, `excluded_tools`, `extensions`; `max_turns`/`inherit_context` are definition-only and `inherit_context: true` refuses; unknown args rejected (`additionalProperties: false`) | Spec §4.1 |
+| `Agent` description | Static | `prepareLoadout` appends the discovered, enabled agent names + descriptions (`buildAgentCatalog`) | Tool descriptions are re-sent every request, so the available `subagent_type` values stay visible after long runs and compaction; Paseo maps tools by name, so the text is contract-neutral |
 | `get_subagent_result` schema | Has `verbose` | No `verbose` | Not implemented in v1 |
 | `prompt_mode` default | `replace` when omitted | `append` when omitted (gotgenes default) | Seeds set `prompt_mode: replace` explicitly |
 | `locked` | Not supported (0.7.3) | `locked: true` or a field list, gotgenes-style | Spec §4.4 pinned model/thinking |

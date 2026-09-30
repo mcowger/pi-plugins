@@ -57,6 +57,12 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   (`appendSystemPrompt`), because the final assistant text is what the parent
   receives back.
 - **`get_subagent_result`.** Tintinweb summary text and `details: null`.
+- **Agent catalog.** The `Agent` tool's `prepareLoadout` appends the discovered,
+  enabled agent names + descriptions to its model-facing description
+  (`buildAgentCatalog`). Tool descriptions are re-sent every request and survive
+  compaction, so the model always knows the available `subagent_type` values.
+  Discovery uses the session's `agentDir` / `cwd` / `trusted`. Paseo maps tools
+  by name, so a changed description is contract-neutral.
 - **Lifecycle events.** `subagents:created` / `started` / `completed` / `failed` /
   `steered` with tintinweb's payloads (built by `transcript.ts`).
 - **Thinking is map-driven.** Validate levels only through
