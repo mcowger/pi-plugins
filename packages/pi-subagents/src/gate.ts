@@ -1,4 +1,4 @@
-import { SPAWNER_TOOL_NAMES } from "./constants.js";
+import { AGENT_TOOL_NAME, SPAWNER_TOOL_NAMES } from "./constants.js";
 import { canSpawn, resolveLineage } from "./lineage.js";
 import { isToolAllowed } from "./selectors.js";
 import type { Lineage } from "./types.js";
@@ -6,9 +6,13 @@ import type { Lineage } from "./types.js";
 /**
  * Reduce a session's active (declared) tool set to what its lineage permits.
  *
- * Applied at session start, before every request, and when MCP servers change,
- * because codemode/tool_search and MCP direct tools activate after session
- * start. The dispatch gate is the execution-time backstop for calls that bypass
+ * The `Agent` tool is always retained: it carries the `prepareLoadout` hook that
+ * hides tools activated after session start (codemode/tool_search and MCP direct
+ * tools activate via `_refreshToolRegistry` → `_applyToolLoadout`). Filtering it
+ * out would leave those late tools declared to the model. `prepareLoadout` hides
+ * `Agent` itself when the policy excludes it or the depth ceiling is reached.
+ *
+ * The dispatch gate remains the execution-time backstop for calls that bypass
  * declarations (for example through `ctx.executeTool`).
  */
 export function filterActiveTools(
@@ -17,10 +21,16 @@ export function filterActiveTools(
 ): string[] {
 	if (!lineage) return [...active];
 	let names = [...active];
-	if (lineage.policy)
-		names = names.filter((name) => isToolAllowed(lineage.policy, name));
-	if (!canSpawn(lineage))
-		names = names.filter((name) => !SPAWNER_TOOL_NAMES.includes(name));
+	if (lineage.policy) {
+		names = names.filter(
+			(name) => name === AGENT_TOOL_NAME || isToolAllowed(lineage.policy, name),
+		);
+	}
+	if (!canSpawn(lineage)) {
+		names = names.filter(
+			(name) => name === AGENT_TOOL_NAME || !SPAWNER_TOOL_NAMES.includes(name),
+		);
+	}
 	return names;
 }
 

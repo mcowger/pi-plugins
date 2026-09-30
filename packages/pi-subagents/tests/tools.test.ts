@@ -82,6 +82,30 @@ describe("tool schemas", () => {
 		} as never);
 		expect(changes?.hiddenDeclarations).toEqual(["write"]);
 	});
+
+	it("hides the spawner as well as disallowed tools at the ceiling", () => {
+		const deps = {
+			...noopDeps(),
+			getSessionState: () => ({
+				cwd: "/tmp",
+				agentDir: "/tmp/agent",
+				config: { maxDepth: 1, approvedExtensions: {}, excludedExtensions: [] },
+				lineage: {
+					sessionId: "s",
+					depth: 1,
+					ceiling: 1,
+					policy: resolveToolPolicy(["read"], []),
+				},
+			}),
+		};
+		const changes = buildAgentTool(deps).prepareLoadout?.({
+			declared: [{ name: "read" }, { name: "codemode" }, { name: "Agent" }],
+		} as never);
+		expect(changes?.hiddenDeclarations).toEqual(
+			expect.arrayContaining(["Agent", "codemode"]),
+		);
+		expect(changes?.hiddenDeclarations).not.toContain("read");
+	});
 });
 
 describe("steer_subagent", () => {

@@ -33,7 +33,7 @@ describe("filterActiveTools", () => {
 		"steer_subagent",
 	];
 
-	it("strips codemode, tool_search, MCP tools, and the spawner at the ceiling", () => {
+	it("strips codemode, tool_search and MCP tools but keeps Agent as the hook holder", () => {
 		const child: Lineage = {
 			sessionId: "child",
 			depth: 1,
@@ -46,6 +46,7 @@ describe("filterActiveTools", () => {
 			"grep",
 			"find",
 			"ls",
+			"Agent",
 		]);
 	});
 

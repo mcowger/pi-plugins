@@ -58,6 +58,30 @@ export default function probe(pi: ExtensionAPI) {
 	pi.on("before_agent_start", () => {
 		record("before_agent_start");
 	});
+	// The provider payload is what the model actually sees; hidden declarations are
+	// applied to it at request time.
+	pi.on("before_provider_request", (event) => {
+		const file = process.env.PI_LIVE_PROBE_FILE;
+		if (!file) return;
+		try {
+			const payload = event.payload as
+				| { tools?: Array<{ name?: string; function?: { name?: string } }> }
+				| undefined;
+			const tools = (payload?.tools ?? [])
+				.map((tool) => tool.name ?? tool.function?.name)
+				.filter((name): name is string => typeof name === "string");
+			appendFileSync(
+				file,
+				`${JSON.stringify({
+					phase: "provider_request",
+					sessionId: ctx?.sessionManager.getSessionId(),
+					tools,
+				})}\n`,
+			);
+		} catch {
+			// Best-effort observation channel.
+		}
+	});
 	for (const channel of CHANNELS) {
 		pi.events.on(channel, (data) => {
 			ctx?.ui.notify(`PROBE ${channel} ${JSON.stringify(data)}`, "info");

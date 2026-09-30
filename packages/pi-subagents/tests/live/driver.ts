@@ -105,6 +105,25 @@ function prepareAgentDir(label: string, scenario: string): string {
 		join(BASELINE, "settings.json"),
 		join(agentDir, "settings.json"),
 	);
+	// The target extension is loaded via --extension; drop any subagent package
+	// the baseline configures so it cannot double-register.
+	const settingsPath = join(agentDir, "settings.json");
+	if (existsSync(settingsPath)) {
+		try {
+			const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+				packages?: unknown;
+			};
+			if (Array.isArray(settings.packages)) {
+				settings.packages = settings.packages.filter(
+					(entry) =>
+						typeof entry !== "string" || !entry.includes("pi-subagents"),
+				);
+				writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+			}
+		} catch {
+			// Leave invalid settings untouched.
+		}
+	}
 	copyIfPresent(join(BASELINE, "auth.json"), join(agentDir, "auth.json"));
 	copyIfPresent(
 		join(BASELINE, "models-store.json"),

@@ -109,7 +109,9 @@ describe("extension wiring", () => {
 			{ type: "session_start" },
 			fakeContext(childId, dir),
 		);
-		expect(active.has("Agent")).toBe(false);
+		expect(active.has("Agent")).toBe(true);
+		// `Agent` stays active only as the prepareLoadout hook holder; the gate
+		// blocks it and prepareLoadout hides its declaration (see tools.test.ts).
 
 		getLineageRegistry().delete(rootId);
 		getLineageRegistry().delete(childId);
@@ -160,7 +162,14 @@ describe("extension wiring", () => {
 			{ type: "session_start" },
 			fakeContext(childId, dir),
 		);
-		expect([...active].sort()).toEqual(["bash", "find", "grep", "ls", "read"]);
+		expect([...active].sort()).toEqual([
+			"Agent",
+			"bash",
+			"find",
+			"grep",
+			"ls",
+			"read",
+		]);
 
 		// Simulate MCP/tool_search activating after session_start.
 		active.add("codemode");
