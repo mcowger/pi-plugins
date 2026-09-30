@@ -39,6 +39,9 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 - **Notification.** Custom type `subagent-notification`; `<task-notification>`
   XML (with `<context_percent>`), the `Full transcript available at:` footer, the
   `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
+  Register a `subagent-notification` message renderer (using `Text` from
+  `@earendil-works/pi-tui`) so the transcript shows a concise block instead of
+  the raw XML content.
 - **`get_subagent_result`.** Tintinweb summary text and `details: null`.
 - **Lifecycle events.** `subagents:created` / `started` / `completed` / `failed` /
   `steered` with tintinweb's payloads (built by `transcript.ts`).

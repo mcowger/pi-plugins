@@ -4,6 +4,7 @@ import {
 	getAgentDir,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { defaultOperatorConfig, loadOperatorConfig } from "./src/config.js";
 import {
 	SUBAGENT_CHILD_DISPOSED,
@@ -17,6 +18,11 @@ import {
 	type SessionState,
 	type SubagentToolDeps,
 } from "./src/tools.js";
+import {
+	formatMs,
+	formatTokens,
+	type NotificationDetails,
+} from "./src/transcript.js";
 import type { Lineage } from "./src/types.js";
 
 /**
@@ -56,6 +62,46 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	for (const tool of buildSubagentTools(deps)) {
 		pi.registerTool(tool as ToolDefinition);
 	}
+
+	// Render the completion notification as a concise block instead of its raw
+	// `<task-notification>` content.
+	pi.registerMessageRenderer<NotificationDetails>(
+		"subagent-notification",
+		(message, { expanded }, theme) => {
+			const details = message.details;
+			if (!details) return undefined;
+			const failed =
+				details.status === "error" ||
+				details.status === "stopped" ||
+				details.status === "aborted";
+			const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
+			const status = failed
+				? details.status
+				: details.status === "steered"
+					? "completed (steered)"
+					: "completed";
+			let line = `${icon} ${theme.bold(details.description)} ${theme.fg("dim", status)}`;
+			const parts: string[] = [];
+			if (details.toolUses > 0)
+				parts.push(
+					`${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`,
+				);
+			if (details.totalTokens > 0)
+				parts.push(formatTokens(details.totalTokens));
+			if (details.durationMs > 0) parts.push(formatMs(details.durationMs));
+			if (parts.length > 0) {
+				line += `\n  ${parts.map((part) => theme.fg("dim", part)).join(theme.fg("dim", " · "))}`;
+			}
+			const preview = expanded
+				? details.resultPreview
+				: (details.resultPreview.split("\n")[0]?.slice(0, 80) ?? "");
+			if (preview) line += `\n  ${theme.fg("dim", `⎿  ${preview}`)}`;
+			if (details.outputFile) {
+				line += `\n  ${theme.fg("dim", `transcript: ${details.outputFile}`)}`;
+			}
+			return new Text(line, 0, 0);
+		},
+	);
 
 	// The active set is the tools declared to the model. Re-apply the frozen
 	// policy whenever registrations can change it: at session start, before

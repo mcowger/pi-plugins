@@ -28,6 +28,7 @@ function createFakePi() {
 
 	const pi = {
 		registerTool: (tool: FakeTool) => tools.set(tool.name, tool),
+		registerMessageRenderer: () => {},
 		on: (event: string, handler: (e: unknown, c: unknown) => unknown) => {
 			handlers.set(event, handler);
 			return () => {};
