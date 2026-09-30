@@ -39,3 +39,4 @@ skips these lightweight tags. Only packages with a `publish-<package>.yml` workf
 
 - `packages/pi-control`: action-based tool-call policy extension and skills.
 - `packages/pi-suppress-providers`: provider visibility extension.
+- `packages/pi-subagents`: in-process subagents with locked model/thinking, a depth ceiling, and a frozen tool policy.
