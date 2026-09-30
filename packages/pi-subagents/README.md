@@ -3,22 +3,67 @@
 Personal, in-process Pi subagents. One main-agent tool call spawns exactly one
 child session. Parallelism comes from independent background calls.
 
-This extension implements the wire contract expected by Paseo's
-`@tintinweb/pi-subagents` adapter without changing Pi or Paseo:
+The extension exposes the Paseo wire contract used by
+`@tintinweb/pi-subagents`, so Paseo's tintinweb adapter works unchanged:
 
 - `Agent` — spawn one child.
 - `get_subagent_result` — read a run's current or terminal state.
-- `steer_subagent` — send a message to, or cancel, a running child.
+- `steer_subagent` — send a message to a running child.
 
-The three tools are registered `model-only`: the model can call them directly,
-but codemode scripts cannot carry orchestration through `ctx.executeTool()`.
+All three are registered `model-only`: the model can call them directly, but
+codemode scripts cannot carry orchestration through `ctx.executeTool()`.
+
+## Contract alignment
+
+Verified against `@tintinweb/pi-subagents` 0.7.3 by replaying recorded Pi RPC
+traces from both packages side by side (see `tests/fixtures/` and
+`tests/playback.test.ts`). These are the items intended to match byte for byte:
+
+| Surface | What aligns |
+|---|---|
+| Tool names / exposure | `Agent`, `get_subagent_result`, `steer_subagent`, all `model-only` |
+| `Agent` required args | `subagent_type`, `prompt`, `description` |
+| `steer_subagent` args | `agent_id`, `message` (no `cancel`) |
+| Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` |
+| Background details | `displayName`, `description`, `subagentType`, `tags`, `toolUses`, `tokens`, `durationMs`, `status:"background"`, `agentId` |
+| Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
+| Foreground result content | `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>`; no `Output file:` line |
+| Foreground details | Same as background plus `turnCount`, `maxTurns`, `status` terminal |
+| Notification | `subagent-notification`, the `<task-notification>` XML (incl. `<context_percent>`), the `Full transcript available at:` footer, `NotificationDetails`, delivered `{ deliverAs: "followUp", triggerTurn: true }` |
+| `get_subagent_result` | Summary text and `details: null` |
+| Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered` — Paseo maps `completed`→completed, `error`→failed, `aborted`/`stopped`→canceled, else running |
+| Lifecycle events | `subagents:created` / `started` / `completed` / `failed` / `steered` with tintinweb's payloads |
+| Definition discovery | `<agentDir>/agents/<name>.md` with trusted `<cwd>/.pi/agents/<name>.md` overrides |
+
+The playback test reconstructs each recorded run from its own facts and asserts
+the current builders reproduce the trace byte for byte, so this alignment cannot
+drift silently.
+
+## Explicit differences
+
+These are intentional and pinned by tests or by the personal design spec. They
+do not affect the fields Paseo's tintinweb adapter reads.
+
+| Area | `@tintinweb/pi-subagents` | This extension | Reason |
+|---|---|---|---|
+| Unknown / disabled `subagent_type` | Falls back to `general-purpose`, returns a normal completed run with an id | Fails closed before admission: tool error, `details: {}`, no id | Spec §4.4 forbids a generic fallback |
+| Depth | No depth limit; children always have the spawner tools removed | Finite operator `maxDepth` (default `1`); per-agent `maxDepth` only narrows; spawner removed and gate-blocked at the ceiling | Spec §6 recursion guard with an opt-in ceiling |
+| Tool policy | Definition `tools`/`disallowed_tools` allowlist and an `isolated` flag | Definition `tools` allowlist plus frozen per-call `included_tools`/`excluded_tools`, enforced by a dispatch gate for direct and codemode-nested calls | Spec §10 |
+| Extension passing | Children inherit every parent extension | Children always get MCP/codemode/tool_search and only operator-approved refs named by `extensions` | Spec §11 |
+| `Agent` schema extras | Accepts `max_turns`, `resume`, `isolated`, `inherit_context`, `isolation`, `schedule` | Accepts `included_tools`, `excluded_tools`, `extensions`; `max_turns`/`inherit_context` are definition-only and `inherit_context: true` refuses; unknown args rejected (`additionalProperties: false`) | Spec §4.1 |
+| `get_subagent_result` schema | Has `verbose` | No `verbose` | Not implemented in v1 |
+| `prompt_mode` default | `replace` when omitted | `append` when omitted (gotgenes default) | Seeds set `prompt_mode: replace` explicitly |
+| `locked` | Not supported (0.7.3) | `locked: true` or a field list, gotgenes-style | Spec §4.4 pinned model/thinking |
+| Transcript file | `.output` text file under a `/tmp/pi-subagents-*` directory | Pi session JSONL under `<agentDir>/subagents/<run-id>/` | Spec §8 uses the session file |
+| Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
+| Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
 
 ## What it owns
 
 - **Locked model + thinking.** Each agent definition can lock `model` and
   `thinking` independently. A locked value is enforced exactly; a conflicting
-  caller value is refused, never clamped, and there is no fallback to the parent
-  model. Supported thinking levels come from the model's own
+  caller value is discarded, never clamped, and there is no fallback to the
+  parent model. Supported thinking levels come from the model's own
   `thinkingLevelMap` at runtime; no level or model name is hardcoded.
 - **Depth ceiling.** Root is depth 0. `maxDepth` is a finite operator setting
   (default `1`). A per-agent `maxDepth` only narrows the inherited lineage. At
@@ -31,10 +76,9 @@ but codemode scripts cannot carry orchestration through `ctx.executeTool()`.
 - **Approved extension passing.** The child always receives the mandatory MCP,
   codemode, and tool_search extensions. Extra extensions come only from
   operator-approved refs.
-- **Deferred notifications.** Terminal `subagent-notification` messages are
-  queued with `triggerTurn: false`, so a zero-duration child cannot lose its
-  update to the spawn-result race.
-- **Transcript visibility.** The spawn result carries one unadorned
+- **Completion notifications.** Terminal `subagent-notification` messages use
+  tintinweb's `{ deliverAs: "followUp", triggerTurn: true }` delivery.
+- **Transcript visibility.** The background spawn result carries one unadorned
   `Output file: <path>` line. Child sessions persist to their own JSONL file
   under `<agentDir>/subagents/<run-id>/`.
 
@@ -113,4 +157,6 @@ operator-supplied only; the model can never name a raw module path.
 
 ## Not in v1
 
-`ask_parent`, `notify_parent`, and resume are not implemented.
+`ask_parent`, `notify_parent`, `resume`, `verbose`, worktree isolation,
+scheduling, extension/skill inheritance, and the `/agents` interactive menu are
+not implemented. `inherit_context: true` refuses admission.

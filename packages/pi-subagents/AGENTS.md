@@ -1,0 +1,159 @@
+# pi-subagents package guide
+
+Guidance for working inside `packages/pi-subagents`. The root `AGENTS.md`
+(monorepo commands, git rules) still applies.
+
+This package is a personal, in-process subagent extension that presents the
+`@tintinweb/pi-subagents` wire contract to Paseo, with a small set of deliberate
+behavioral differences. The whole point of the tests and fixtures is to keep both
+of those true.
+
+## Required invariants
+
+Do not change these without regenerating and reviewing the live traces. They are
+pinned by `tests/playback.test.ts` and the recorded fixtures.
+
+- **Tool surface.** Register exactly `Agent`, `get_subagent_result`, and
+  `steer_subagent`, all with `exposure: "model-only"`. Never make them `direct`
+  or codemode-callable.
+- **`Agent` schema.** `subagent_type`, `prompt`, and `description` are required;
+  `additionalProperties: false`.
+- **`steer_subagent` schema.** `agent_id` and `message` required; no `cancel`.
+- **Status vocabulary.** `running`, `background`, `completed`, `steered`,
+  `aborted`, `stopped`, `error`. Terminal states are immutable
+  (`SubagentRun.transition` throws). Never emit `failed`/`canceled`/`Done`.
+- **Background result.** Exact tintinweb text, including the unadorned,
+  whitespace-free `Output file: <path>` line.
+- **Foreground result.** `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>`
+  and no `Output file:` line.
+- **Details shape.** Background: `displayName`, `description`, `subagentType`,
+  `tags`, `toolUses`, `tokens`, `durationMs`, `status`, `agentId`. Foreground adds
+  `turnCount`, `maxTurns`. Tag order is `twin`, `thinking: …`, `inherit context`,
+  `background`, `max turns: …`.
+- **Notification.** Custom type `subagent-notification`; `<task-notification>`
+  XML (with `<context_percent>`), the `Full transcript available at:` footer, the
+  `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
+- **`get_subagent_result`.** Tintinweb summary text and `details: null`.
+- **Lifecycle events.** `subagents:created` / `started` / `completed` / `failed` /
+  `steered` with tintinweb's payloads (built by `transcript.ts`).
+- **Thinking is map-driven.** Validate levels only through
+  `getSupportedThinkingLevels(model)`. Never hardcode a thinking-level enum or a
+  model name. A definition's unsupported level is dropped; a caller's is refused.
+- **Fail closed on admission.** A refusal throws before any session/file/network
+  work and creates no run and no id.
+- **Depth.** `maxDepth` is finite (default `1`); per-agent `maxDepth` only
+  narrows; at the ceiling the spawner is removed and gate-blocked.
+- **Tool policy.** `included_tools` / `excluded_tools` freeze at admission and
+  the `tool_call` gate enforces them for direct *and* codemode-nested calls.
+- **Child always loads this extension** (resolved self path) so the child's own
+  gate exists. Do not remove `resolveSelfExtensionPath`.
+- **Transcript path is whitespace-free.** The Paseo reader matches
+  `/^Output file:\s*(\S+)$/m`.
+
+## Required deviations
+
+These are intentional and must remain. Do not "fix" them to match tintinweb; do
+update `tests/playback.test.ts` if the behavior changes on purpose.
+
+- **Unknown/disabled `subagent_type` fails closed** (tool error, `details: {}`,
+  no id) instead of tintinweb's fallback to `general-purpose`. Spec §4.4.
+- **Depth ceiling** exists; tintinweb has no limit.
+- **Frozen include/exclude tool policy + dispatch gate**; tintinweb uses
+  `tools`/`isolated` only.
+- **Approved-extension passing**; tintinweb inherits every parent extension.
+- **Schema extras** (`included_tools`, `excluded_tools`, `extensions`) and
+  `inherit_context: true` refused; tintinweb has resume/isolated/worktree/etc.
+- **`prompt_mode` defaults to `append`** (gotgenes); tintinweb defaults to
+  `replace`.
+- **`locked`** is supported (gotgenes style); tintinweb 0.7.3 has none.
+- **Transcript is the Pi session JSONL** under `<agentDir>/subagents/<run-id>/`;
+  tintinweb writes a `.output` text file.
+- **Extra `subagents:child:session-created` / `disposed` events** for pi-control.
+- **Operator config is `<agentDir>/pi-subagents.json`.**
+
+`README.md` has the full table with the rationale.
+
+## Unit testing
+
+```sh
+bun run check   # biome + tsc, run from the package
+bun test
+```
+
+What each test pins:
+
+| File | Pins |
+|---|---|
+| `tests/definition.test.ts` | gotgenes frontmatter parsing |
+| `tests/invocation.test.ts` | caller/definition precedence and `locked` |
+| `tests/model.test.ts` | model resolution (exact + fuzzy), thinking map validation |
+| `tests/selectors.test.ts`, `tests/gate.test.ts` | include/exclude policy and the dispatch gate |
+| `tests/lineage.test.ts` | depth ceiling and narrowing |
+| `tests/extensions.test.ts` | approved-extension refs |
+| `tests/transcript.test.ts` | wire text/details builders |
+| `tests/tools.test.ts` | schemas and tool behavior |
+| `tests/extension.test.ts` | factory wiring: registration, ceiling removal, gate |
+| `tests/playback.test.ts` | **contract alignment against recorded traces** |
+
+When changing a wire builder (`src/transcript.ts`), `tests/transcript.test.ts`
+and `tests/playback.test.ts` must both pass. A deliberate change to the wire
+means editing the assertions **and** regenerating the fixtures (below), with the
+diff reviewed.
+
+## Using the transcripts
+
+`tests/fixtures/tintinweb-rpc.jsonl` is a real RPC trace from
+`@tintinweb/pi-subagents` — the contract oracle.
+`tests/fixtures/mine-rpc.jsonl` is this extension's recorded output.
+
+- Playback reconstructs each run from the trace's own facts (ids, paths, metrics)
+  with `setSystemTime` to pin durations, then asserts the current builders
+  reproduce the trace byte for byte.
+- Never hand-edit a fixture. Regenerate with the live harness and re-run
+  `bun test`.
+- Fixtures must stay secret-free: they contain only synthetic prompts, random
+  ids, `/tmp` paths, and metrics. Do not paste real session content or
+  credentials into them.
+
+## Live testing
+
+The live harness runs the real `pi` binary in RPC mode against an isolated
+`PI_CODING_AGENT_DIR`, once per target, and records the event stream.
+
+**Never run this automatically** — it makes real, paid model calls and is
+non-deterministic. Run it only when explicitly asked.
+
+```sh
+# 1. Capture both sides (each writes <root>/<label>/<label>-rpc.jsonl)
+bun tests/live/driver.ts mine
+bun tests/live/driver.ts tintinweb
+
+# 2. Compare at the contract level (masks run-dependent values)
+bun tests/live/compare.ts
+```
+
+Files: `tests/live/driver.ts` (scenario + RPC client), `tests/live/probe.ts`
+(records `pi.events` lifecycle signals), `tests/live/compare.ts` (canonical diff).
+
+Environment (defaults in the script):
+
+| Var | Purpose |
+|---|---|
+| `PI_BIN` | `pi` binary (default `~/.local/share/path-overrides/pi-local/pi`) |
+| `PI_LIVE_DIR` | scratch root (default `/tmp/pi-subagents-live`) |
+| `PI_LIVE_BASELINE_AGENT_DIR` | agent dir to copy provider state from (default `~/.pi/agent`) |
+| `PI_LIVE_PROVIDER` / `PI_LIVE_MODEL` / `PI_LIVE_THINKING` | model under test |
+| `PI_LIVE_TINTINWEB_EXT` | oracle extension ref |
+| `PI_LIVE_SLICE` | chars of each mismatching record `compare.ts` prints (default 300) |
+
+The driver copies `settings.json`, `auth.json`, `models-store.json`,
+`extensions/`, and `agents/` from the baseline, symlinks `npm`/`packages`,
+empties `mcp.json`, and writes both `pi-subagents.json` and `subagents.json`.
+The scenario spawns background and foreground children, a bad-type call, and a
+`get_subagent_result` follow-up; keep those prompts stable so traces stay
+comparable.
+
+To refresh a fixture: run `driver.ts` for the side you changed, copy
+`<root>/<label>/<label>-rpc.jsonl` over the corresponding `tests/fixtures/`
+file, re-run `bun test`, and review the fixture diff for anything unexpected
+(secrets, unrelated content).
