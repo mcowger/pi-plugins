@@ -21,11 +21,14 @@ import {
 	buildAgentDetails,
 	buildBackgroundDetails,
 	buildBackgroundResultText,
+	buildCreatedEvent,
 	buildEventData,
 	buildForegroundResultText,
 	buildGetResultText,
 	buildNotFoundText,
 	buildNotificationDetails,
+	buildStartedEvent,
+	buildSteeredEvent,
 	buildSteerNotRunningText,
 	buildSteerSentText,
 	formatTaskNotification,
@@ -318,18 +321,9 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 			});
 
 			if (invocation.runInBackground) {
-				deps.emitEvent("subagents:created", {
-					id: run.id,
-					type: run.subagentType,
-					description: run.description,
-					isBackground: true,
-				});
+				deps.emitEvent("subagents:created", buildCreatedEvent(run));
 			}
-			deps.emitEvent("subagents:started", {
-				id: run.id,
-				type: run.subagentType,
-				description: run.description,
-			});
+			deps.emitEvent("subagents:started", buildStartedEvent(run));
 
 			if (invocation.runInBackground) {
 				return textResult(
@@ -390,10 +384,10 @@ export function buildSteerTool(deps: SubagentToolDeps) {
 			};
 			if (session.isStreaming) await session.steer(params.message);
 			else await session.prompt(params.message);
-			deps.emitEvent("subagents:steered", {
-				id: run.id,
-				message: params.message,
-			});
+			deps.emitEvent(
+				"subagents:steered",
+				buildSteeredEvent(run, params.message),
+			);
 			return textResult(buildSteerSentText(run));
 		},
 	};

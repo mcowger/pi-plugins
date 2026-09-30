@@ -321,6 +321,29 @@ export function buildSteerNotRunningText(run: SubagentRun): string {
 	return `Agent "${run.id}" is not running (status: ${run.status}). Cannot steer a non-running agent.`;
 }
 
+/** `subagents:created` payload, matching tintinweb. */
+export function buildCreatedEvent(run: SubagentRun): Record<string, unknown> {
+	return {
+		id: run.id,
+		type: run.subagentType,
+		description: run.description,
+		isBackground: true,
+	};
+}
+
+/** `subagents:started` payload, matching tintinweb. */
+export function buildStartedEvent(run: SubagentRun): Record<string, unknown> {
+	return { id: run.id, type: run.subagentType, description: run.description };
+}
+
+/** `subagents:steered` payload, matching tintinweb. */
+export function buildSteeredEvent(
+	run: SubagentRun,
+	message: string,
+): Record<string, unknown> {
+	return { id: run.id, message };
+}
+
 /**
  * Cross-extension lifecycle payload, matching tintinweb's `buildEventData`.
  * `tokens` is omitted when nothing was produced.
