@@ -85,7 +85,8 @@ Read a run's current or terminal state, or block for it.
 | `wait` | no | Await terminal state without advancing the child |
 
 `wait: true` returns the result as a tool result and suppresses the notification's
-wake-up turn (the notification is still sent so the UI clears the run).
+wake-up turn (the notification is still sent so the UI clears the run). Aborting
+the turn while the wait is pending cancels the child instead of orphaning it.
 
 ### `steer_subagent`
 
@@ -123,6 +124,7 @@ The frontmatter follows the `@gotgenes/pi-subagents` format:
 | `model` | inherit parent | Exact `provider/modelId` or a fuzzy name |
 | `thinking` | inherit parent | Validated against the resolved model's `thinkingLevelMap` |
 | `max_turns` | unlimited | Soft cap, then a five-turn grace window before abort |
+| `timeout_minutes` | disabled | Abort the child after this many wall-clock minutes (any positive number); a timed-out or cancelled wait aborts the child too |
 | `prompt_mode` | `append` | `append` wraps the body in `<agent_instructions>`; `replace` appends it raw |
 | `inherit_context` | `false` | Not supported in v1; `true` refuses admission |
 | `run_in_background` | ignored | Accepted for compatibility; children always run in the background |

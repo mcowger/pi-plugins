@@ -73,6 +73,12 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   model name. A definition's unsupported level is dropped; a caller's is refused.
 - **Fail closed on admission.** A refusal throws before any session/file/network
   work and creates no run and no id.
+- **Cancellation stops the child.** `SubagentRun.requestTermination` aborts its
+  `AbortController`; `spawnSubagent` listens on that signal and calls
+  `session.abort()`. Keep the wiring: without it, termination only records intent
+  and the child keeps running. The per-definition `timeout_minutes` timer and an
+  aborted `get_subagent_result { wait: true }` caller both terminate through it,
+  and `run.terminationReason` becomes the terminal error.
 - **Depth.** `maxDepth` is finite (default `1`); per-agent `maxDepth` only
   narrows; at the ceiling the spawner is removed and gate-blocked.
 - **Tool policy.** `included_tools` / `excluded_tools` freeze at admission and
@@ -127,6 +133,8 @@ update `tests/playback.test.ts` if the behavior changes on purpose.
   cwd via their own resource loader; the parent's `--no-context-files` does not
   propagate.
 - **Operator config is `<agentDir>/pi-subagents.json`.**
+- **`timeout_minutes` is per-definition** (any positive number of minutes; no
+  operator default). Tintinweb 0.7.3 has no per-child timeout.
 
 `DESIGN.md` has the full tables with the rationale.
 
@@ -196,6 +204,8 @@ Scenarios:
 | Scenario | Covers | Comparable to tintinweb |
 |---|---|---|
 | `contract` | background/foreground/bad-type/followup | yes |
+| `wait` | block on a child's result; status still reported, no extra turn | no — this extension's behavior |
+| `timeout` | child sleeps past its per-definition `timeout_minutes` | no — tintinweb has no per-child timeout |
 | `nested` | child spawns a grandchild at `maxDepth: 2` | no — tintinweb strips the spawner |
 | `concurrent` | three background children in one turn | yes (tintinweb group-joins completions) |
 | `steer` | steer a running background child | yes |

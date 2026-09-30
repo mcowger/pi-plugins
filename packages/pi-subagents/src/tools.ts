@@ -399,6 +399,7 @@ export function buildGetResultTool() {
 		async execute(
 			_toolCallId: string,
 			params: { agent_id: string; wait?: boolean },
+			signal?: AbortSignal,
 		): Promise<AgentToolResult<unknown>> {
 			const agentId = requireNonEmpty(params.agent_id, "agent_id");
 			const run = getRunRegistry().get(agentId);
@@ -407,7 +408,16 @@ export function buildGetResultTool() {
 				// Claim before blocking: the notification fires from the terminal hook,
 				// which runs before this await resumes.
 				run.claimResult();
-				await run.settled;
+				// Aborting the parent turn should stop the child, not orphan it.
+				const onAbort = () =>
+					run.requestTermination("aborted", "parent turn aborted");
+				if (signal?.aborted) onAbort();
+				else signal?.addEventListener("abort", onAbort, { once: true });
+				try {
+					await run.settled;
+				} finally {
+					signal?.removeEventListener("abort", onAbort);
+				}
 			} else if (run.terminal) {
 				run.claimResult();
 			}

@@ -71,6 +71,7 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | Child summary | No built-in instruction | A fixed instruction is appended to the child's system prompt to end with a self-contained summary | The final assistant text is what the parent receives back |
 | Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
 | Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
+| Child timeout | No per-child timeout | `timeout_minutes` frontmatter per definition; no operator default | Bounds a hung child without a global cap |
 
 ## What it owns
 
@@ -90,6 +91,12 @@ do not affect the fields Paseo's tintinweb adapter reads.
 - **Approved extension passing.** The child always receives the mandatory MCP,
   codemode, and tool_search extensions. Extra extensions come only from
   operator-approved refs.
+- **Per-definition child timeout.** `timeout_minutes` aborts a child after that
+  many wall-clock minutes (status `aborted`, reason `timeout of N minutes
+  reached`). There is no operator default. `requestTermination` aborts the run's
+  `AbortController`, and `spawnSubagent` wires that signal to `session.abort()`, so
+  a timeout — or aborting a `get_subagent_result { wait: true }` caller — actually
+  stops the child session rather than leaving it running.
 - **Completion notifications.** Terminal `subagent-notification` messages use
   tintinweb's `{ deliverAs: "followUp", triggerTurn: true }` delivery.
 - **Transcript visibility.** Every child runs in the background, so the spawn

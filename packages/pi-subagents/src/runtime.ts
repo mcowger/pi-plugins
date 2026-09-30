@@ -262,36 +262,71 @@ export function resolveTerminalStatus(
 	return { status: "completed" };
 }
 
+/**
+ * Arm the per-definition wall-clock timeout. Returns a disarm function. The
+ * timer requests termination with an `aborted` intent and a clear reason; the
+ * abort listener wired in `spawnSubagent` stops the child session.
+ */
+export function armRunTimeout(
+	run: SubagentRun,
+	timeoutMinutes: number | undefined,
+): () => void {
+	if (!timeoutMinutes || timeoutMinutes <= 0) return () => {};
+	const timer = setTimeout(
+		() =>
+			run.requestTermination(
+				"aborted",
+				`timeout of ${timeoutMinutes} minutes reached`,
+			),
+		timeoutMinutes * 60_000,
+	);
+	return () => clearTimeout(timer);
+}
+
 async function runChild(
 	run: SubagentRun,
 	session: AgentSession,
 	promptText: string,
 	maxTurns: number | undefined,
+	timeoutMinutes: number | undefined,
 	onTerminal: ((run: SubagentRun) => void) | undefined,
 ): Promise<void> {
 	const tracker = trackRun(session, run, maxTurns);
+	const disarmTimeout = armRunTimeout(run, timeoutMinutes);
 	try {
 		await session.prompt(promptText);
 		captureContextPercent(run, session);
 		run.resultText ??= session.getLastAssistantText();
 		if (!run.terminal) {
-			const terminal = resolveTerminalStatus(tracker.state, maxTurns);
-			if (terminal.status === "completed") {
-				run.transition("completed", {
+			// A termination request (timeout, parent abort, shutdown) wins over the
+			// provider error an aborted turn can also report.
+			const intent = run.terminationIntent;
+			if (intent === "stopped" || intent === "aborted") {
+				run.transition(intent, {
+					error: run.terminationReason ?? "terminated",
 					summary: session.getLastAssistantText(),
 				});
 			} else {
-				run.transition(terminal.status, {
-					error: terminal.error,
-					summary: session.getLastAssistantText(),
-				});
+				const terminal = resolveTerminalStatus(tracker.state, maxTurns);
+				if (terminal.status === "completed") {
+					run.transition("completed", {
+						summary: session.getLastAssistantText(),
+					});
+				} else {
+					run.transition(terminal.status, {
+						error: terminal.error,
+						summary: session.getLastAssistantText(),
+					});
+				}
 			}
 		}
 	} catch (error) {
 		captureContextPercent(run, session);
 		run.resultText ??= session.getLastAssistantText();
 		if (!run.terminal) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message =
+				run.terminationReason ??
+				(error instanceof Error ? error.message : String(error));
 			const intent = run.terminationIntent;
 			if (intent === "stopped") run.transition("stopped", { error: message });
 			else if (intent === "aborted")
@@ -299,6 +334,7 @@ async function runChild(
 			else run.transition("error", { error: message });
 		}
 	} finally {
+		disarmTimeout();
 		tracker.unsubscribe();
 		try {
 			onTerminal?.(run);
@@ -412,11 +448,21 @@ export async function spawnSubagent(
 	);
 	const lineageRegistry = getLineageRegistry();
 	lineageRegistry.register(lineage);
+	// `requestTermination` (timeout, parent abort, shutdown) aborts this signal;
+	// the child session must abort with it, or the signal does nothing.
+	const abortChild = () => {
+		void Promise.resolve(session.abort()).catch(() => {});
+	};
+	run.abortController.signal.addEventListener("abort", abortChild, {
+		once: true,
+	});
 	run.attachChild(session, () => {
+		run.abortController.signal.removeEventListener("abort", abortChild);
 		lineageRegistry.delete(childSessionId);
 		request.onChildDisposed?.(childSessionId);
 		session.dispose();
 	});
+	if (run.abortController.signal.aborted) abortChild();
 	request.onChildCreated?.(childSessionId);
 
 	// bindExtensions emits session_start, which connects MCP and lets the
@@ -438,6 +484,7 @@ export async function spawnSubagent(
 			session,
 			request.prompt,
 			request.invocation.maxTurns,
+			request.definition.timeoutMinutes,
 			request.onTerminal,
 		),
 	);

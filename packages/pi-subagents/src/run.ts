@@ -66,6 +66,7 @@ export class SubagentRun {
 	private _childSession?: unknown;
 	private _disposeChild?: () => void;
 	private _terminationIntent?: "stopped" | "aborted";
+	private _terminationReason?: string;
 	/** Set once a get_subagent_result call claims the result (blocks for it or reads it). */
 	private _resultRequested = false;
 	readonly abortController = new AbortController();
@@ -107,14 +108,20 @@ export class SubagentRun {
 		dispose?.();
 	}
 
-	requestTermination(intent: "stopped" | "aborted"): void {
+	requestTermination(intent: "stopped" | "aborted", reason?: string): void {
 		if (this.terminal) return;
 		this._terminationIntent = intent;
+		if (reason !== undefined) this._terminationReason = reason;
 		this.abortController.abort();
 	}
 
 	get terminationIntent(): "stopped" | "aborted" | undefined {
 		return this._terminationIntent;
+	}
+
+	/** Why termination was requested, e.g. a timeout. */
+	get terminationReason(): string | undefined {
+		return this._terminationReason;
 	}
 
 	get status(): SubagentStatus {

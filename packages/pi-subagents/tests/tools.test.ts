@@ -194,6 +194,25 @@ describe("get_subagent_result", () => {
 		await buildGetResultTool().execute("8", { agent_id: "poll-test" });
 		expect(run.resultRequested).toBe(true);
 	});
+
+	it("cancels the child when the waiting tool call is aborted", async () => {
+		const run = new SubagentRun({
+			id: "abort-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(run);
+		const controller = new AbortController();
+		const pending = buildGetResultTool().execute(
+			"9",
+			{ agent_id: "abort-test", wait: true },
+			controller.signal,
+		);
+		controller.abort();
+		expect(run.terminationIntent).toBe("aborted");
+		run.transition("aborted", { error: "parent turn aborted" });
+		await pending;
+	});
 });
 
 describe("steer_subagent", () => {

@@ -220,7 +220,9 @@ export function buildNotificationText(run: SubagentRun): string {
 	} else if (run.status === "stopped") {
 		header = `Agent "${label}" stopped.`;
 	} else if (run.status === "aborted") {
-		header = `Agent "${label}" aborted (turn limit).`;
+		header = run.error
+			? `Agent "${label}" aborted: ${run.error}.`
+			: `Agent "${label}" aborted (turn limit).`;
 	} else {
 		const parts: string[] = [];
 		if (run.toolUses > 0)

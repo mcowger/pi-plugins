@@ -41,4 +41,13 @@ describe("SubagentRun", () => {
 		r.claimResult();
 		expect(r.resultRequested).toBe(true);
 	});
+
+	it("records a termination reason and aborts its signal", () => {
+		const r = run();
+		expect(r.abortController.signal.aborted).toBe(false);
+		r.requestTermination("aborted", "timeout of 5 minutes reached");
+		expect(r.abortController.signal.aborted).toBe(true);
+		expect(r.terminationIntent).toBe("aborted");
+		expect(r.terminationReason).toBe("timeout of 5 minutes reached");
+	});
 });

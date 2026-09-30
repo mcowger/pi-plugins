@@ -1,5 +1,33 @@
 import { describe, expect, it } from "bun:test";
-import { resolveTerminalStatus } from "../src/runtime.js";
+import { SubagentRun } from "../src/run.js";
+import { armRunTimeout, resolveTerminalStatus } from "../src/runtime.js";
+
+describe("armRunTimeout", () => {
+	it("aborts the run with a timeout reason", async () => {
+		const r = new SubagentRun({
+			id: "t",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		const disarm = armRunTimeout(r, 0.001); // ~60ms
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		disarm();
+		expect(r.terminationIntent).toBe("aborted");
+		expect(r.terminationReason).toContain("timeout");
+	});
+
+	it("does nothing when undefined or zero", () => {
+		const r = new SubagentRun({
+			id: "t2",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		armRunTimeout(r, undefined)();
+		armRunTimeout(r, 0)();
+		expect(r.terminationIntent).toBeUndefined();
+		expect(r.abortController.signal.aborted).toBe(false);
+	});
+});
 
 describe("resolveTerminalStatus", () => {
 	it("marks a provider error as error", () => {

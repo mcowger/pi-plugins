@@ -28,6 +28,7 @@ interface RawFrontmatter {
 	model?: unknown;
 	thinking?: unknown;
 	max_turns?: unknown;
+	timeout_minutes?: unknown;
 	prompt_mode?: unknown;
 	inherit_context?: unknown;
 	run_in_background?: unknown;
@@ -83,6 +84,14 @@ function parseMaxTurns(value: unknown): number | undefined {
 	return Math.floor(value);
 }
 
+/** Minutes until a child is aborted; undefined or 0 disables the timeout. */
+function parseTimeoutMinutes(value: unknown): number | undefined {
+	if (value === undefined || value === null || value === "") return undefined;
+	if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+		throw new Error("timeout_minutes must be a positive number of minutes");
+	return value;
+}
+
 function parseMaxDepth(value: unknown): number | undefined {
 	if (value === undefined || value === null || value === "") return undefined;
 	if (
@@ -101,8 +110,8 @@ function parseMaxDepth(value: unknown): number | undefined {
  *
  * Follows the `@gotgenes/pi-subagents` frontmatter format: `description`,
  * `display_name`, `tools`, `model`, `thinking`, `max_turns`, `prompt_mode`,
- * `inherit_context`, `run_in_background`, `enabled`, and `locked`. `extensions`
- * and `maxDepth` are local additions. Unknown keys are ignored.
+ * `inherit_context`, `run_in_background`, `enabled`, and `locked`. `extensions`,
+ * `maxDepth`, and `timeout_minutes` are local additions. Unknown keys are ignored.
  */
 export function parseAgentDefinition(
 	name: string,
@@ -125,6 +134,7 @@ export function parseAgentDefinition(
 		// Thinking is validated against the resolved model's map at admission.
 		thinking: str(frontmatter.thinking),
 		maxTurns: parseMaxTurns(frontmatter.max_turns),
+		timeoutMinutes: parseTimeoutMinutes(frontmatter.timeout_minutes),
 		promptMode,
 		inheritContext: parseBool(frontmatter.inherit_context),
 		runInBackground: parseBool(frontmatter.run_in_background),

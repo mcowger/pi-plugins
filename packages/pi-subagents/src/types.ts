@@ -56,6 +56,8 @@ export interface AgentDefinition {
 	thinking?: string;
 	/** Max agentic turns; undefined or 0 means unlimited. */
 	maxTurns?: number;
+	/** Minutes until the child is aborted; undefined or 0 means no timeout. */
+	timeoutMinutes?: number;
 	/** How the definition body joins the child system prompt. */
 	promptMode: PromptMode;
 	/** Whether to fork the parent conversation (not supported in v1). */

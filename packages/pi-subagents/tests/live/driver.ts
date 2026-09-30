@@ -11,6 +11,7 @@
  * Scenarios:
  *   contract    background/foreground/bad-type/followup (default)
  *   wait        block on a child's result; status still reported, no extra turn (mine only)
+ *   timeout     a child that sleeps past its per-definition timeout is aborted (mine only)
  *   nested      child spawns a grandchild (this extension only)
  *   concurrent  three background children in one turn
  *   steer       steer a running background child
@@ -486,6 +487,39 @@ async function runWait(rpc: Rpc, tool: string): Promise<void> {
 	}
 }
 
+async function runTimeout(rpc: Rpc, tool: string): Promise<void> {
+	// The slowpoke definition sets timeout_minutes: 0.1 (~6s); the child sleeps
+	// far longer. The timeout must abort it and report the reason.
+	await sendPrompt(
+		rpc,
+		"timeout-1",
+		`${spawnInstruction(tool, {
+			subagent_type: "slowpoke",
+			prompt: "Run bash with command 'sleep 300'.",
+			description: "timeout target",
+			run_in_background: true,
+		})} Then call the get_subagent_result tool exactly once with the agent_id from that result and wait: true. Then reply with the single word DONE and stop.`,
+	);
+	const resultText = rpc.records
+		.filter(isToolEnd("get_subagent_result"))
+		.map(toolResultText)
+		.join("\n");
+	if (!resultText.includes("Status: aborted")) {
+		throw new Error(
+			`timeout did not abort the child: ${resultText.slice(0, 200)}`,
+		);
+	}
+	const notification = rpc.records
+		.filter(isNotification)
+		.map((record) => String((record.message as Rec).content ?? ""))
+		.join("\n");
+	if (!/timeout/i.test(notification)) {
+		throw new Error(
+			`timeout notification missing a reason: ${notification.slice(0, 200)}`,
+		);
+	}
+}
+
 async function runNested(rpc: Rpc, tool: string): Promise<void> {
 	await sendPrompt(
 		rpc,
@@ -638,6 +672,8 @@ async function runScenario(rpc: Rpc, target: Target): Promise<void> {
 			return runNested(rpc, target.tool);
 		case "wait":
 			return runWait(rpc, target.tool);
+		case "timeout":
+			return runTimeout(rpc, target.tool);
 		case "concurrent":
 			return runConcurrent(rpc, target.tool);
 		case "steer":

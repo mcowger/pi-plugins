@@ -37,6 +37,25 @@ describe("parseAgentDefinition (gotgenes frontmatter)", () => {
 		expect(definition.enabled).toBe(true);
 	});
 
+	it("parses timeout_minutes and rejects a non-positive value", () => {
+		const withTimeout = parseAgentDefinition(
+			"slow",
+			"/agents/slow.md",
+			"user",
+			"---\ntimeout_minutes: 15\n---\nbody\n",
+		);
+		expect(withTimeout.timeoutMinutes).toBe(15);
+		expect(withTimeout.maxTurns).toBeUndefined();
+		expect(() =>
+			parseAgentDefinition(
+				"bad",
+				"/agents/bad.md",
+				"user",
+				"---\ntimeout_minutes: -1\n---\nbody\n",
+			),
+		).toThrow("timeout_minutes");
+	});
+
 	it("defaults tools to the seven built-ins", () => {
 		const definition = parseAgentDefinition(
 			"x",
