@@ -28,7 +28,8 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 - **Background result.** Exact tintinweb text, including the unadorned,
   whitespace-free `Output file: <path>` line.
 - **Foreground result.** `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>`
-  and no `Output file:` line.
+  followed by the unadorned `Output file: <path>` line (so Paseo can attach the
+  finished foreground child's transcript).
 - **Details shape.** Background: `displayName`, `description`, `subagentType`,
   `tags`, `toolUses`, `tokens`, `durationMs`, `status`, `agentId`. Foreground adds
   `turnCount`, `maxTurns`. Tag order is `twin`, `thinking: …`, `inherit context`,

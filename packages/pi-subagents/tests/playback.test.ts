@@ -208,7 +208,11 @@ function replay(label: string): void {
 	// --- Foreground run ---
 	setSystemTime(T0);
 	const fg: Rec = fgEnd.result.details;
-	const fgResult = String(fgEnd.result.content[0].text)
+	const fgText = String(fgEnd.result.content[0].text);
+	// Our foreground result ends with the `Output file:` line; tintinweb's does not.
+	const fgOutputFile = fgText.match(/^Output file:\s*(\S+)$/m)?.[1];
+	const fgResult = fgText
+		.replace(/\nOutput file: \S+$/, "")
 		.split("\n\n")
 		.slice(1)
 		.join("\n\n");
@@ -217,6 +221,7 @@ function replay(label: string): void {
 		subagentType: fg.subagentType,
 		displayName: fg.displayName,
 		description: fg.description,
+		outputFile: fgOutputFile,
 		maxTurns: fg.maxTurns,
 		tags: fg.tags,
 		startedAt: T0,

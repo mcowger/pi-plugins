@@ -27,7 +27,7 @@ traces from both packages side by side (see `tests/fixtures/` and
 | Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` |
 | Background details | `displayName`, `description`, `subagentType`, `tags`, `toolUses`, `tokens`, `durationMs`, `status:"background"`, `agentId` |
 | Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
-| Foreground result content | `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>`; no `Output file:` line |
+| Foreground result content | `Agent completed in <d>s (<uses>, <tokens>).\n\n<result>` (plus the `Output file:` line — see differences) |
 | Foreground details | Same as background plus `turnCount`, `maxTurns`, `status` terminal |
 | Notification | `subagent-notification`, the `<task-notification>` XML (incl. `<context_percent>`), the `Full transcript available at:` footer, `NotificationDetails`, delivered `{ deliverAs: "followUp", triggerTurn: true }` |
 | `get_subagent_result` | Summary text and `details: null` |
@@ -57,6 +57,7 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | Transcript file | `.output` text file under a `/tmp/pi-subagents-*` directory | Pi session JSONL under `<agentDir>/subagents/<run-id>/` | Spec §8 uses the session file |
 | Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
 | Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |
+| Foreground transcript pointer | No `Output file:` line on the foreground result | Appends the `Output file:` line so Paseo can attach the finished foreground child's transcript | Spec §8; Paseo reads the line from the spawn result only |
 | Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
 | Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
 

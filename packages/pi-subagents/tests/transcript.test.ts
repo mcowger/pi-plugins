@@ -62,15 +62,23 @@ describe("transcript wire shapes", () => {
 		});
 	});
 
-	it("foreground content matches tintinweb (no Output file line)", () => {
+	it("foreground content ends with the Output file line for Paseo", () => {
 		const run = makeRun({ startedAt: 1000 });
 		run.toolUses = 3;
 		run.transition("completed", { summary: "pong" });
 		const text = buildForegroundResultText(run);
 		expect(text).toMatch(
-			/^Agent completed in \d+\.\d+s \(3 tool uses\)\.\n\npong$/,
+			/^Agent completed in \d+\.\d+s \(3 tool uses\)\.\n\npong/,
 		);
-		expect(text).not.toContain("Output file:");
+		expect(WIRE_REGEX.exec(text)?.[1]).toBe(
+			"/tmp/pi-example/subagent-9f2a.jsonl",
+		);
+	});
+
+	it("foreground content omits the line when there is no transcript path", () => {
+		const run = makeRun({ startedAt: 1000, outputFile: undefined });
+		run.transition("completed", { summary: "pong" });
+		expect(buildForegroundResultText(run)).not.toContain("Output file:");
 	});
 
 	it("formats tokens the tintinweb way", () => {

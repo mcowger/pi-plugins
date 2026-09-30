@@ -259,16 +259,24 @@ export function buildBackgroundResultText(
 	);
 }
 
+/**
+ * The spawn result content for a foreground run.
+ *
+ * Unlike tintinweb, it ends with the unadorned `Output file:` line so Paseo can
+ * attach the child transcript to the finished foreground run (spec §8). Paseo's
+ * tintinweb adapter reads that line from the spawn result only.
+ */
 export function buildForegroundResultText(run: SubagentRun): string {
+	const outputLine = run.outputFile ? `\nOutput file: ${run.outputFile}` : "";
 	if (run.status === "error") {
-		return `Agent failed: ${run.error ?? "unknown"}`;
+		return `Agent failed: ${run.error ?? "unknown"}${outputLine}`;
 	}
 	const statsParts = [`${run.toolUses} tool uses`];
 	const tokens = tokenString(run);
 	if (tokens) statsParts.push(tokens);
 	return (
 		`Agent completed in ${formatMs(durationMs(run))} (${statsParts.join(", ")})${statusNote(run.status)}.\n\n` +
-		rawResult(run)
+		`${rawResult(run)}${outputLine}`
 	);
 }
 
