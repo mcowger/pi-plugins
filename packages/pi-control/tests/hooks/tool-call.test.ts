@@ -303,17 +303,43 @@ describe("piped bash nudge suppression", () => {
 		expect(pendingNudges.has("pipe-nudge-2")).toBe(false);
 	});
 
-	it("still nudges first-stage grep whose output is piped elsewhere", async () => {
+	it("does not nudge when grep's output is piped elsewhere", async () => {
 		pendingNudges.clear();
 		await handleToolCall(
 			bashEvent("grep foo file.txt | head", "pipe-nudge-3"),
 			makeCtx("/tmp"),
 			grepNudgeConfig,
 		);
-		const stored = pendingNudges.get("pipe-nudge-3") ?? "";
-		expect(stored).toContain("Prefer the grep tool over grep");
-		expect(stored).toContain("You ran bash");
-		expect(stored).toContain("matched pattern `grep *`");
+		expect(pendingNudges.has("pipe-nudge-3")).toBe(false);
+	});
+
+	it("does not nudge a mid-pipeline find toward the find tool", async () => {
+		const findNudgeConfig: ControlsResolvedConfig = {
+			...grepNudgeConfig,
+			policies: {
+				nudged: {
+					defaultAction: "allow",
+					rules: [
+						{
+							action: "nudge",
+							tool: "bash",
+							pattern: "find *",
+							message: "Prefer the find tool over find",
+						},
+					],
+				},
+			},
+		};
+		pendingNudges.clear();
+		await handleToolCall(
+			bashEvent(
+				"ls packages | echo --- | find packages -type f -name '*.ts' | head -50",
+				"pipe-nudge-4",
+			),
+			makeCtx("/tmp"),
+			findNudgeConfig,
+		);
+		expect(pendingNudges.has("pipe-nudge-4")).toBe(false);
 	});
 });
 

@@ -171,33 +171,6 @@ function stageInterpreterLabel(stage: CommandStage): string {
 }
 
 /**
- * File-dumping commands whose stdout legitimately feeds a downstream pipeline
- * stage (e.g. `cat package.json | python3 -c ...`).
- *
- * A nudge toward the read tool does not apply there — the read tool returns
- * content to the agent, it cannot feed the next stage's stdin.
- */
-const PIPE_FEED_EXEMPT = new Set([
-	"cat",
-	"head",
-	"tail",
-	"less",
-	"more",
-	"strings",
-	"xxd",
-	"od",
-	"tac",
-	"nl",
-]);
-
-/** True when the stage is a file-dump command feeding a pipeline. */
-function stageFeedsPipe(stage: CommandStage): boolean {
-	const first = stage.args[0];
-	if (!first?.static) return false;
-	return PIPE_FEED_EXEMPT.has(basename(first.value).toLowerCase());
-}
-
-/**
  * Classify inline eval sources in bash stages via the Decisions API.
  *
  * Returns one outcome per source (plus one per unrecoverable/error case).
@@ -1180,21 +1153,16 @@ export async function handleToolCall(
 					const result =
 						approved ??
 						matchRuleWithDetails(resolved.policy, "bash", stage.command);
-					// Piped stages (e.g. `bun test | grep foo`) filter piped stdin
-					// rather than searching files, so a nudge toward a
-					// file-search tool does not apply. Only nudge when the
-					// command is invoked directly.
-					if (stage.pipedInput && !approved && result.action === "nudge") {
-						continue;
-					}
-					// File dumps feeding a pipeline (e.g. `cat package.json | python3 -c ...`)
-					// supply stdin to the next stage, which the read tool cannot do,
-					// so a nudge toward the read tool does not apply.
+					// A nudge toward a native tool only applies when the shell command
+					// is invoked directly. Inside a pipeline the native tool is not an
+					// alternative: the shell is doing something it cannot — consuming
+					// a previous stage's stdout (`bun test | grep foo`) or feeding the
+					// next stage's stdin (`cat package.json | python3 -c ...`,
+					// `find . | head`).
 					if (
-						stage.pipedOutput &&
+						(stage.pipedInput || stage.pipedOutput) &&
 						!approved &&
-						result.action === "nudge" &&
-						stageFeedsPipe(stage)
+						result.action === "nudge"
 					) {
 						continue;
 					}
