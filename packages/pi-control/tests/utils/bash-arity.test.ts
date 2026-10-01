@@ -1,5 +1,36 @@
 import { describe, expect, it } from "bun:test";
-import { suggestSessionPattern } from "../../src/utils/bash-arity.js";
+import {
+	normalizeCommand,
+	suggestSessionPattern,
+} from "../../src/utils/bash-arity.js";
+
+describe("normalizeCommand", () => {
+	it("strips git -C <path> so the subcommand follows git", () => {
+		expect(normalizeCommand("git -C /repo status --short --branch")).toBe(
+			"git status --short --branch",
+		);
+		expect(normalizeCommand("git -C /repo log --oneline -5")).toBe(
+			"git log --oneline -5",
+		);
+	});
+
+	it("handles attached and --opt=value global options", () => {
+		expect(normalizeCommand("git -C/repo status")).toBe("git status");
+		expect(normalizeCommand("git --git-dir=/repo/.git log")).toBe("git log");
+		expect(normalizeCommand("git -c core.pager=cat log --oneline")).toBe(
+			"git log --oneline",
+		);
+		expect(normalizeCommand("git --no-pager log --oneline")).toBe(
+			"git log --oneline",
+		);
+	});
+
+	it("leaves non-git commands and ordinary git commands unchanged", () => {
+		expect(normalizeCommand("ls -la /tmp")).toBe("ls -la /tmp");
+		expect(normalizeCommand("git status --short")).toBe("git status --short");
+		expect(normalizeCommand("rm -rf /tmp/x")).toBe("rm -rf /tmp/x");
+	});
+});
 
 describe("suggestSessionPattern", () => {
 	it("suggests git <subcommand>* for git commands (arity covers entire command)", () => {
@@ -70,6 +101,25 @@ describe("suggestSessionPattern", () => {
 
 	it("suggests gh * for other GitHub CLI commands", () => {
 		expect(suggestSessionPattern("gh auth status")).toBe("gh auth *");
+	});
+
+	it("ignores git global options when suggesting the subcommand pattern", () => {
+		expect(suggestSessionPattern("git -C /repo status --short")).toBe(
+			"git status *",
+		);
+		expect(suggestSessionPattern("git -C /repo status")).toBe("git status*");
+		expect(
+			suggestSessionPattern("git --git-dir=/repo/.git log --oneline"),
+		).toBe("git log *");
+		expect(suggestSessionPattern("git --no-pager log --oneline")).toBe(
+			"git log *",
+		);
+	});
+
+	it("keeps a destructive subcommand behind git -C intact", () => {
+		expect(suggestSessionPattern("git -C /repo reset --hard")).toBe(
+			"git reset *",
+		);
 	});
 
 	it("handles extra whitespace in command", () => {

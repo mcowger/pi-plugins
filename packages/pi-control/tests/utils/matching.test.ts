@@ -101,6 +101,42 @@ describe("matchRule", () => {
 		expect(matchRule(strictPolicy, "read", null)).toBe("log");
 	});
 
+	// Regression: `git -C <path> <sub>` put the path where the subcommand was
+	// expected, so read-only rules like `git status *` never matched and a
+	// read-only command fell through to the policy default. Pattern matching now
+	// also tries the arity-normalized command.
+	it("matches git patterns when git global options precede the subcommand", () => {
+		const policy: Policy = {
+			defaultAction: "deny",
+			rules: [{ action: "allow", tool: "bash", pattern: "git status *" }],
+		};
+		expect(
+			matchRule(policy, "bash", "git -C /repo status --short --branch"),
+		).toBe("allow");
+	});
+
+	it("does not match a read rule against a non-read git -C subcommand", () => {
+		const policy: Policy = {
+			defaultAction: "deny",
+			rules: [{ action: "allow", tool: "bash", pattern: "git status *" }],
+		};
+		expect(matchRule(policy, "bash", "git -C /repo push origin main")).toBe(
+			"deny",
+		);
+		expect(matchRule(policy, "bash", "git -C /repo reset --hard")).toBe("deny");
+	});
+
+	it("still prefers the more specific rule after normalization", () => {
+		const policy: Policy = {
+			defaultAction: "deny",
+			rules: [
+				{ action: "allow", tool: "bash", pattern: "git *" },
+				{ action: "ask", tool: "bash", pattern: "git commit *" },
+			],
+		};
+		expect(matchRule(policy, "bash", "git -C /repo commit -m 'x'")).toBe("ask");
+	});
+
 	// Regression: minimatch treated command strings as file paths, so patterns
 	// like "find *" failed to match commands with deep absolute paths because
 	// minimatch's ** doesn't span the leading / in path segments.

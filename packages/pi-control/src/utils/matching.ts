@@ -1,5 +1,6 @@
 import { minimatch } from "minimatch";
 import type { Action, Policy, Rule } from "../config.js";
+import { normalizeCommand } from "./bash-arity.js";
 
 // ─── Glob helpers ───────────────────────────────────────────────────────────────
 
@@ -98,10 +99,16 @@ export function matchRuleWithDetails(
 		// Tool glob must match.
 		if (!matchTool(rule.tool, toolName)) continue;
 
-		// For bash, the command pattern must also match (if specified).
+		// For bash, the command pattern must also match (if specified). Match
+		// against the arity-normalized form as well so a pattern like
+		// `git status *` also matches `git -C /repo status ...` (git global
+		// options are otherwise mistaken for the subcommand).
 		let patternMatched = false;
 		if (toolName === "bash" && rule.pattern !== undefined) {
-			patternMatched = command !== null && matchCommand(rule.pattern, command);
+			patternMatched =
+				command !== null &&
+				(matchCommand(rule.pattern, command) ||
+					matchCommand(rule.pattern, normalizeCommand(command)));
 			if (!patternMatched) continue;
 		}
 
