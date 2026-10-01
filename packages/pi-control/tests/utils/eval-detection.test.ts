@@ -12,6 +12,8 @@ function arg(value: string, stationary = true) {
 function stage(
 	args: ReturnType<typeof arg>[],
 	embeddedSources: EmbeddedSource[] = [],
+	shellEnv?: Record<string, string>,
+	pipedInput = false,
 ): CommandStage {
 	return {
 		command: args.map((a) => a.value).join(" "),
@@ -19,9 +21,10 @@ function stage(
 		redirectFiles: [],
 		pathArgs: [],
 		embeddedSources,
-		pipedInput: false,
+		pipedInput,
 		pipedOutput: false,
 		targetsResolved: true,
+		shellEnv: shellEnv ? new Map(Object.entries(shellEnv)) : undefined,
 	};
 }
 
@@ -273,6 +276,92 @@ describe("detectEvalSources", () => {
 			sources: [],
 			unavailable: [],
 		});
+	});
+
+	it("resolves a dynamic interpreter from same-command assignments", () => {
+		// Reported false positive: `P=…/paseo; $P schedule …` asked with
+		// "interpreter name is dynamic" even though the definition sits in
+		// the same tool call.
+		expect(
+			detectEvalSources(
+				stage([arg("$P", false), arg("schedule"), arg("--help")], [], {
+					P: "/home/matt.cowger/.local/share/path-overrides/paseo",
+				}),
+			),
+		).toEqual({ sources: [], unavailable: [] });
+	});
+
+	it("classifies inline source under a resolved interpreter", () => {
+		const sources = expectSources(
+			detectEvalSources(
+				stage([arg("$P", false), arg("-c"), arg("print(1)")], [], {
+					P: "python3",
+				}),
+			),
+		);
+		expect(sources[0]).toMatchObject({
+			language: "python",
+			interpreter: "python3",
+			origin: "inline",
+		});
+	});
+
+	it("keeps eval-shaped stages fail-closed when the interpreter is unknown", () => {
+		const dynamic = "interpreter name is dynamic";
+		// Resolved to a non-interpreter, but a hidden conditional
+		// reassignment (`cond && P=python3`) could still make it one.
+		expect(
+			detectEvalSources(
+				stage([arg("$P", false), arg("-c"), arg("evil")], [], {
+					P: "paseo",
+				}),
+			).unavailable,
+		).toEqual([dynamic]);
+		// No assignment at all, but the `-c` flag is visible.
+		expect(
+			detectEvalSources(stage([arg("$P", false), arg("-c"), arg("evil")], []))
+				.unavailable,
+		).toEqual([dynamic]);
+		// Subcommand-shaped eval (`$D eval …` with $D=deno).
+		expect(
+			detectEvalSources(stage([arg("$D", false), arg("eval"), arg("1+1")], []))
+				.unavailable,
+		).toEqual([dynamic]);
+		// Dynamic arguments hide the shape entirely.
+		expect(
+			detectEvalSources(stage([arg("$P", false), arg("$CODE", false)], []))
+				.unavailable,
+		).toEqual([dynamic]);
+		// Heredoc stdin could be code in an unknown language.
+		expect(
+			detectEvalSources(stage([arg("$P", false)], [heredoc("print(1)\n")]))
+				.unavailable,
+		).toEqual([dynamic]);
+		// A bare interpreter executes piped stdin as code.
+		expect(
+			detectEvalSources(stage([arg("$P", false)], [], undefined, true))
+				.unavailable,
+		).toEqual([dynamic]);
+	});
+
+	it("reports nothing for non-eval-shaped stages with a dynamic interpreter", () => {
+		// `$P schedule --help` carries no inline source for any interpreter.
+		expect(
+			detectEvalSources(
+				stage([arg("$P", false), arg("schedule"), arg("--help")], []),
+			).unavailable,
+		).toEqual([]);
+		// Piped stdin is data, not code, once arguments are present.
+		expect(
+			detectEvalSources(
+				stage(
+					[arg("$P", false), arg("schedule"), arg("ls")],
+					[],
+					undefined,
+					true,
+				),
+			).unavailable,
+		).toEqual([]);
 	});
 
 	it("ignores non-interpreter commands", () => {

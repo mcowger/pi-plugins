@@ -240,4 +240,53 @@ describe("parseCommand", () => {
 		expect(stages).toHaveLength(1);
 		expect(stages[0].command).toBe("cat");
 	});
+
+	it("threads same-command assignments to later stages, not the assignment", async () => {
+		const stages = await parseCommand("P=/tmp/paseo; date -Is; $P schedule");
+		expect(stages).toHaveLength(2);
+		expect(Object.fromEntries(stages[0].shellEnv ?? [])).toEqual({
+			P: "/tmp/paseo",
+		});
+		expect(Object.fromEntries(stages[1].shellEnv ?? [])).toEqual({
+			P: "/tmp/paseo",
+		});
+	});
+
+	it("tracks export, reassignment, unset, and dynamic values", async () => {
+		const exported = await parseCommand("export P=/tmp/paseo; $P x");
+		expect(Object.fromEntries(exported[0].shellEnv ?? [])).toEqual({
+			P: "/tmp/paseo",
+		});
+
+		const reassigned = await parseCommand("P=a; P=/bin/ls; $P -l");
+		expect(Object.fromEntries(reassigned[0].shellEnv ?? [])).toEqual({
+			P: "/bin/ls",
+		});
+
+		const unset = await parseCommand("P=a; unset P; $P x");
+		expect(Object.fromEntries(unset[0].shellEnv ?? [])).toEqual({});
+
+		const dynamic = await parseCommand("P=$OTHER; $P x");
+		expect(Object.fromEntries(dynamic[0].shellEnv ?? [])).toEqual({});
+	});
+
+	it("keeps prefix assignments local to their stage", async () => {
+		const stages = await parseCommand("P=paseo $P schedule; $P x");
+		expect(Object.fromEntries(stages[0].shellEnv ?? [])).toEqual({
+			P: "paseo",
+		});
+		expect(Object.fromEntries(stages[1].shellEnv ?? [])).toEqual({});
+	});
+
+	it("does not leak assignments across conditional or concurrent boundaries", async () => {
+		const listed = await parseCommand("P=a && P=b; $P x");
+		expect(Object.fromEntries(listed.at(-1)?.shellEnv ?? [])).toEqual({});
+
+		const piped = await parseCommand("P=a; P=b | $P x");
+		// Pipeline stages run in subshells: the later stage sees P=a, not
+		// the sibling's reassignment.
+		expect(Object.fromEntries(piped.at(-1)?.shellEnv ?? [])).toEqual({
+			P: "a",
+		});
+	});
 });

@@ -32,7 +32,7 @@ Without a `decisions` block, eval classification is off and `auto` behaves as `a
 | `model` | `typesafe/jev-1.13` | Model |
 | `timeoutMs` | `15000` | Per-request timeout |
 | `errorAction` | `"ask"` | Verdict on API/auth/timeout/malformed errors (`allow`/`ask`/`deny`) |
-| `unavailableAction` | `"ask"` | Eval-shaped command whose source can't be recovered (`python -c "$CODE"`, `curl … \| python`) |
+| `unavailableAction` | `"ask"` | Eval-shaped command whose source can't be recovered (`python -c "$CODE"`, `curl … \| python`). A dynamic interpreter (`$P …`) only counts as unrecoverable when the stage is eval-shaped (eval flags, dynamic args, heredoc/herestring, or bare with piped stdin); same-command assignments (`P=…/paseo; $P …`) are resolved first |
 | `maxSourceBytes` | `32768` | Eval source truncation |
 | `yesThreshold` / `noThreshold` / `choiceConfidence` / `riskyMassThreshold` / `backstopThreshold` / `weights` | — | Tuning for **eval classification** only |
 | `auto` | — | Tuning for the **auto action** (below) |

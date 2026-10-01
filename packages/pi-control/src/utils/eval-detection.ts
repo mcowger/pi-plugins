@@ -559,6 +559,91 @@ function extractShell(
 	return { sources, unavailable: [] };
 }
 
+/** `$NAME` / `${NAME}` — anything fancier stays dynamic. */
+const SIMPLE_VAR_REF =
+	/^\$([A-Za-z_][A-Za-z0-9_]*)$|^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+/**
+ * Tokens that suggest inline evaluation when the interpreter itself is
+ * unknown (`$P -c …`, `$D eval …`). Anything else with fully static
+ * arguments carries no inline source for any interpreter: script-file and
+ * module runs are out of scope by design, and bare version/help-style
+ * invocations do nothing — so those stages report nothing instead of
+ * fail-closing to ask.
+ */
+const UNKNOWN_INTERPRETER_EVAL_TOKENS = new Set([
+	"-c",
+	"-e",
+	"--eval",
+	"-p",
+	"--print",
+	"-",
+	"-s",
+]);
+
+/** Resolve a dynamic argv[0] through same-command shell assignments. */
+function resolveInterpreter(
+	value: string,
+	env: ReadonlyMap<string, string> | undefined,
+): string | null {
+	if (!env) return null;
+	const match = SIMPLE_VAR_REF.exec(value);
+	if (!match) return null;
+	const raw = env.get(match[1] ?? match[2]);
+	if (!raw) return null;
+	const base = basename(raw).toLowerCase();
+	return base || null;
+}
+
+/**
+ * Verdict for a stage whose interpreter cannot be determined: fail closed
+ * only when the stage is eval-shaped (eval flags, a dynamic argument, or
+ * stdin sources whose language is unknowable). Otherwise there is
+ * provably no inline source to classify.
+ */
+function unknownInterpreter(
+	args: CommandArgument[],
+	stage: CommandStage,
+): EvalDetection {
+	if (stage.embeddedSources.length > 0) {
+		return unrecoverable("interpreter name is dynamic");
+	}
+	if (stage.pipedInput && args.length === 1) {
+		// A bare interpreter executes piped stdin as code (`echo hi | $P`
+		// with $P=python3) — same fail-closed as a static bare
+		// interpreter with no recoverable source. With static arguments
+		// (`echo x | $P schedule`) stdin is data, not code, for any
+		// interpreter, so those stages still report nothing.
+		return unrecoverable("interpreter name is dynamic");
+	}
+	for (let index = 1; index < args.length; index++) {
+		const argument = args[index];
+		if (!argument.static) {
+			return unrecoverable("interpreter name is dynamic");
+		}
+		if (
+			UNKNOWN_INTERPRETER_EVAL_TOKENS.has(argument.value) ||
+			(index === 1 && argument.value === "eval")
+		) {
+			return unrecoverable("interpreter name is dynamic");
+		}
+	}
+	return none();
+}
+
+/** True for interpreter names whose invocations can carry inline source. */
+function isEvalInterpreter(interpreter: string): boolean {
+	return (
+		PYTHON_EXECUTABLE.test(interpreter) ||
+		interpreter === "node" ||
+		interpreter === "bun" ||
+		interpreter === "deno" ||
+		interpreter === "tsx" ||
+		interpreter === "ts-node" ||
+		interpreter === "bash" ||
+		interpreter === "sh"
+	);
+}
+
 /** Detect inline code evals in a parsed Bash command stage. */
 export function detectEvalSources(stage: CommandStage): EvalDetection {
 	if (stage.args.length === 0) return none();
@@ -569,9 +654,21 @@ export function detectEvalSources(stage: CommandStage): EvalDetection {
 		return unrecoverable(unwrapped.unresolved);
 	}
 	const args = unwrapped.args;
-	const interpreter = executableName(args[0]);
+	let interpreter = executableName(args[0]);
+	let resolved = false;
 	if (!interpreter) {
-		return unrecoverable("interpreter name is dynamic");
+		interpreter = resolveInterpreter(args[0].value, stage.shellEnv);
+		resolved = interpreter !== null;
+	}
+	if (!interpreter) {
+		return unknownInterpreter(args, stage);
+	}
+	if (resolved && !isEvalInterpreter(interpreter)) {
+		// A same-command assignment says this is not a code runner — but a
+		// conditional reassignment the parser cannot see (`cond && P=…`)
+		// could still make it one at runtime. Believe the assignment only
+		// for stages with provably no inline source.
+		return unknownInterpreter(args, stage);
 	}
 
 	if (PYTHON_EXECUTABLE.test(interpreter)) {

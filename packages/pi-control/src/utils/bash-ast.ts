@@ -53,6 +53,15 @@ export interface CommandStage {
 	 * regex fallback.
 	 */
 	targetsResolved: boolean;
+	/**
+	 * Statically-known shell variable values (`NAME=value` assignments
+	 * seen earlier in the same command) visible at this stage.
+	 * Eval-interpreter resolution only — never path policy. A wrong value
+	 * here must not widen file access; eval-detection.ts only consumes it
+	 * under guards (static args, no eval flags, no embedded sources) that
+	 * make the outcome identical for any interpreter.
+	 */
+	shellEnv?: ReadonlyMap<string, string>;
 }
 
 // ─── Module state ────────────────────────────────────────────────────────────
@@ -319,11 +328,66 @@ function extractRedirects(
 	return { redirectFiles, embeddedSources, targetsResolved };
 }
 
+/** Shell variable values known statically at a point in the command. */
+type ShellEnv = Map<string, string>;
+
+/**
+ * Read a `variable_assignment` node (`NAME=value`). Returns null when the
+ * value cannot be determined statically — the caller must treat the
+ * variable as unknown (delete it), never keep a stale value.
+ */
+function readAssignment(node: SyntaxNode): {
+	name: string;
+	value: string | null;
+} | null {
+	const name = node.childForFieldName("name");
+	if (!name) return null;
+	const value = node.childForFieldName("value");
+	if (!value) return { name: name.text, value: null };
+	if (containsDynamicShellNode(value)) return { name: name.text, value: null };
+	const decoded = decodeStaticShellWord(value.text);
+	return {
+		name: name.text,
+		value: decoded === null ? null : decoded,
+	};
+}
+
+/** Apply a `variable_assignment` to the live env (static sets, else forget). */
+function applyAssignment(node: SyntaxNode, env: ShellEnv): void {
+	const parsed = readAssignment(node);
+	if (!parsed) return;
+	if (parsed.value === null) env.delete(parsed.name);
+	else env.set(parsed.name, parsed.value);
+}
+
+/**
+ * Collect stages for commands nested in substitutions (e.g. the `$(…)` in
+ * `P=$(gen)`) — they execute, so policy still sees them, but their
+ * assignments must not escape into the surrounding shell.
+ */
+function collectNestedSubstitutions(
+	node: SyntaxNode,
+	stages: CommandStage[],
+	env: ShellEnv,
+): void {
+	for (const child of namedChildren(node)) {
+		if (
+			child.type === "command_substitution" ||
+			child.type === "process_substitution"
+		) {
+			collectStages(child, stages, new Map(env));
+		} else {
+			collectNestedSubstitutions(child, stages, env);
+		}
+	}
+}
+
 function buildStage(
 	node: SyntaxNode,
 	inheritedRedirects: SyntaxNode[],
 	pipedInput: boolean,
 	pipedOutput: boolean,
+	env: ShellEnv,
 ): CommandStage {
 	const ownRedirects = redirectNodes(node);
 	const redirects = [...ownRedirects, ...inheritedRedirects];
@@ -361,12 +425,14 @@ function buildStage(
 			targetsResolved && args.every((argument) => argument.static),
 		pipedInput,
 		pipedOutput,
+		shellEnv: new Map(env),
 	};
 }
 
 function collectStages(
 	node: SyntaxNode,
 	stages: CommandStage[],
+	env: ShellEnv = new Map(),
 	inheritedRedirects: SyntaxNode[] = [],
 	pipedInput = false,
 	pipedOutput = false,
@@ -377,11 +443,14 @@ function collectStages(
 			// First stage reads from the original stdin; later stages read
 			// from the previous stage's stdout. Likewise, every stage but
 			// the last pipes its stdout to the next stage.
+			// Pipeline stages run concurrently in subshells, so assignments
+			// neither leak out nor across stages — each child gets a copy.
 			const isFirst = index === 0;
 			const isLast = index === children.length - 1;
 			collectStages(
 				child,
 				stages,
+				new Map(env),
 				inheritedRedirects,
 				isFirst ? pipedInput : true,
 				isLast ? pipedOutput : true,
@@ -393,26 +462,93 @@ function collectStages(
 	if (node.type === "redirected_statement") {
 		const body = node.childForFieldName("body");
 		const redirects = redirectNodes(node);
-		if (body) collectStages(body, stages, redirects, pipedInput, pipedOutput);
+		// Redirects don't fork the shell — the body sees the live env.
+		if (body)
+			collectStages(body, stages, env, redirects, pipedInput, pipedOutput);
 		return;
 	}
 
 	if (node.type === "command") {
-		stages.push(buildStage(node, inheritedRedirects, pipedInput, pipedOutput));
+		// `NAME=value` prefixes apply to this command only: overlay them on
+		// a copy so they resolve this stage without leaking downstream.
+		const overlay = new Map(env);
+		for (const child of namedChildren(node)) {
+			if (child.type === "variable_assignment") {
+				applyAssignment(child, overlay);
+				collectNestedSubstitutions(child, stages, overlay);
+			}
+		}
+		stages.push(
+			buildStage(node, inheritedRedirects, pipedInput, pipedOutput, overlay),
+		);
 		// Commands nested in substitutions execute as separate stages.
 		for (const child of namedChildren(node)) {
 			if (
 				child.type === "command_substitution" ||
 				child.type === "process_substitution"
 			) {
-				collectStages(child, stages);
+				collectStages(child, stages, new Map(overlay));
 			}
 		}
 		return;
 	}
 
+	// Standalone `NAME=value;` — previously dropped entirely, so a later
+	// `$NAME` stage reported "interpreter name is dynamic". Record it.
+	if (node.type === "variable_assignment") {
+		applyAssignment(node, env);
+		collectNestedSubstitutions(node, stages, env);
+		return;
+	}
+
+	// `export NAME=value` (and declare/local/readonly/typeset) persists in
+	// the current shell — same handling as a plain assignment.
+	if (node.type === "declaration_command") {
+		for (const child of namedChildren(node)) {
+			if (child.type === "variable_assignment") {
+				applyAssignment(child, env);
+			}
+		}
+		collectNestedSubstitutions(node, stages, env);
+		return;
+	}
+
+	// `unset NAME` — forget the value.
+	if (node.type === "unset_command") {
+		for (const child of namedChildren(node)) {
+			if (child.type === "variable_name") env.delete(child.text);
+		}
+		return;
+	}
+
+	// `{ …; }` groups and the program root run sequentially in the current
+	// shell — thread the live env through in order.
+	if (node.type === "program" || node.type === "compound_statement") {
+		for (const child of namedChildren(node)) {
+			collectStages(
+				child,
+				stages,
+				env,
+				inheritedRedirects,
+				pipedInput,
+				pipedOutput,
+			);
+		}
+		return;
+	}
+
+	// Everything else (`&&`/`||` lists, subshells, if/loops/case,
+	// functions, …) may or may not execute its assignments, so defs inside
+	// never escape — but nested commands still execute and are collected.
 	for (const child of namedChildren(node)) {
-		collectStages(child, stages, inheritedRedirects, pipedInput, pipedOutput);
+		collectStages(
+			child,
+			stages,
+			new Map(env),
+			inheritedRedirects,
+			pipedInput,
+			pipedOutput,
+		);
 	}
 }
 
