@@ -31,6 +31,14 @@ export interface AutoTranscriptEntry extends AutoVerdictInfo {
 	ts: string;
 }
 
+/**
+ * One-line summary for `ctx.ui.notify`. Custom entries only render in the Pi
+ * TUI; remote clients such as Paseo only surface notify messages.
+ */
+export function formatAutoVerdictNotice(info: AutoVerdictInfo): string {
+	return `[pi-controls auto] ${info.verdict} ${info.command ?? info.tool}: ${info.explanation}`;
+}
+
 /** Attach a timestamp, producing the durable entry payload. */
 export function toAutoTranscriptEntry(
 	info: AutoVerdictInfo,

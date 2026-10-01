@@ -21,6 +21,7 @@ import {
 	AUTO_ENTRY_TYPE,
 	type AutoTranscriptEntry,
 	type AutoVerdictInfo,
+	formatAutoVerdictNotice,
 	toAutoTranscriptEntry,
 } from "./utils/auto-transcript.js";
 
@@ -58,12 +59,24 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 
 	// Live auto evaluations are surfaced as durable custom entries: visible in
 	// the transcript, never sent to the model (see utils/auto-transcript.ts).
-	const appendAutoVerdict = (info: AutoVerdictInfo): void => {
-		pi.appendEntry<AutoTranscriptEntry>(
-			AUTO_ENTRY_TYPE,
-			toAutoTranscriptEntry(info),
-		);
-	};
+	// Custom entries only render in the Pi TUI, so also notify for remote UIs
+	// (e.g. Paseo) that only surface ctx.ui.notify.
+	const autoVerdictSink =
+		(ctx: {
+			ui: {
+				notify: (message: string, type?: "info" | "warning" | "error") => void;
+			};
+		}) =>
+		(info: AutoVerdictInfo): void => {
+			pi.appendEntry<AutoTranscriptEntry>(
+				AUTO_ENTRY_TYPE,
+				toAutoTranscriptEntry(info),
+			);
+			ctx.ui.notify(
+				formatAutoVerdictNotice(info),
+				info.verdict === "deny" ? "warning" : "info",
+			);
+		};
 
 	pi.registerEntryRenderer<AutoTranscriptEntry>(
 		AUTO_ENTRY_TYPE,
@@ -243,7 +256,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 			config,
 			mode,
 			toolInfo,
-			appendAutoVerdict,
+			autoVerdictSink(ctx),
 		);
 	});
 
