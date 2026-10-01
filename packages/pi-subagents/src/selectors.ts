@@ -17,15 +17,29 @@ export function resolveToolPolicy(
 	};
 }
 
+/**
+ * Canonical form of a tool name for policy matching. Pi 0.99.2 rewrites `-` to
+ * `_` in MCP namespace and tool names (`mcp__my-server__x` -> `mcp__my_server__x`),
+ * so policies written with either spelling must match tools from either host.
+ */
+function canonicalToolName(name: string): string {
+	return name.startsWith("mcp__") ? name.replaceAll("-", "_") : name;
+}
+
+function listHas(names: readonly string[], canonical: string): boolean {
+	return names.some((name) => canonicalToolName(name) === canonical);
+}
+
 /** Whether a tool name passes a policy. `undefined` policy means all allowed. */
 export function isToolAllowed(
 	policy: ToolPolicy | undefined,
 	toolName: string,
 ): boolean {
 	if (!policy) return true;
-	if (policy.excluded.includes(toolName)) return false;
+	const canonical = canonicalToolName(toolName);
+	if (listHas(policy.excluded, canonical)) return false;
 	if (policy.included === undefined) return true;
-	return policy.included.includes(toolName);
+	return listHas(policy.included, canonical);
 }
 
 /** Names explicitly referenced by a policy, for diagnostics. */

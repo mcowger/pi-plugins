@@ -52,6 +52,25 @@ describe("tool selectors", () => {
 		expect(isToolAllowed(policy, "mcp__exa__web_search_exa")).toBe(true);
 	});
 
+	it("matches MCP names across Pi's - to _ normalization", () => {
+		const legacy = resolveToolPolicy(
+			["mcp__dev-radius__read-file", "mcp__dev-radius__delete"],
+			["mcp__dev-radius__delete"],
+		);
+		expect(isToolAllowed(legacy, "mcp__dev_radius__read_file")).toBe(true);
+		expect(isToolAllowed(legacy, "mcp__dev_radius__delete")).toBe(false);
+
+		const current = resolveToolPolicy(undefined, ["mcp__dev_radius__delete"]);
+		expect(isToolAllowed(current, "mcp__dev-radius__delete")).toBe(false);
+		expect(isToolAllowed(current, "mcp__dev-radius__read-file")).toBe(true);
+	});
+
+	it("does not rewrite non-MCP tool names", () => {
+		const policy = resolveToolPolicy(undefined, ["my-tool"]);
+		expect(isToolAllowed(policy, "my_tool")).toBe(true);
+		expect(isToolAllowed(policy, "my-tool")).toBe(false);
+	});
+
 	it("an undefined policy allows everything", () => {
 		expect(isToolAllowed(undefined, "anything")).toBe(true);
 	});
