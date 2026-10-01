@@ -36,7 +36,16 @@ export interface AutoTranscriptEntry extends AutoVerdictInfo {
  * TUI; remote clients such as Paseo only surface notify messages.
  */
 export function formatAutoVerdictNotice(info: AutoVerdictInfo): string {
-	return `[pi-controls auto] ${info.verdict} ${info.command ?? info.tool}: ${info.explanation}`;
+	const clauses = info.explanation
+		.split("; ")
+		.map((clause) => clause.trim())
+		.filter((clause) => clause.length > 0)
+		.map((clause) => `• ${clause}`);
+	return [
+		`pi-controls auto: ${info.verdict.toUpperCase()}`,
+		info.command === null ? `tool: ${info.tool}` : `$ ${info.command}`,
+		...clauses,
+	].join("\n");
 }
 
 /** Attach a timestamp, producing the durable entry payload. */
