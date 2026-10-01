@@ -3,6 +3,7 @@ import type {
 	ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { Box, Text } from "@earendil-works/pi-tui";
 import { createConfigLoader } from "./config.js";
 import { handleToolCall, pendingNudges } from "./hooks/tool-call.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -16,6 +17,12 @@ import {
 } from "./utils/subagent.js";
 import { clearPromptStore, rememberUserPrompt } from "./utils/auto-state.js";
 import { clearAutoCache } from "./utils/auto-decisions.js";
+import {
+	AUTO_ENTRY_TYPE,
+	type AutoTranscriptEntry,
+	type AutoVerdictInfo,
+	toAutoTranscriptEntry,
+} from "./utils/auto-transcript.js";
 
 export type ControlsMode = "enforce" | "ignore" | "inform";
 
@@ -48,6 +55,46 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	/** Best-effort tool metadata (description + schema) for auto context. */
 	const toolInfo = (name: string) =>
 		pi.getAllTools().find((tool) => tool.name === name);
+
+	// Live auto evaluations are surfaced as durable custom entries: visible in
+	// the transcript, never sent to the model (see utils/auto-transcript.ts).
+	const appendAutoVerdict = (info: AutoVerdictInfo): void => {
+		pi.appendEntry<AutoTranscriptEntry>(
+			AUTO_ENTRY_TYPE,
+			toAutoTranscriptEntry(info),
+		);
+	};
+
+	pi.registerEntryRenderer<AutoTranscriptEntry>(
+		AUTO_ENTRY_TYPE,
+		(entry, { expanded }, theme) => {
+			const data = entry.data;
+			if (!data) {
+				return new Text(theme.fg("dim", "[pi-controls auto] (no data)"), 0, 0);
+			}
+			const color = data.verdict === "deny" ? "error" : "success";
+			const target = data.command ?? data.tool;
+			const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+			box.addChild(
+				new Text(
+					`${theme.fg("accent", "[pi-controls auto]")} ${theme.fg(color, data.verdict)} ${target}`,
+					0,
+					0,
+				),
+			);
+			box.addChild(new Text(theme.fg("dim", data.explanation), 0, 0));
+			if (expanded && data.targets.length > 0) {
+				box.addChild(
+					new Text(
+						theme.fg("dim", `targets: ${data.targets.join(", ")}`),
+						0,
+						0,
+					),
+				);
+			}
+			return box;
+		},
+	);
 
 	function setWidgetForMode(ctx: {
 		ui: { setWidget: (id: string, lines: string[]) => void };
@@ -190,7 +237,14 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	pi.on("tool_call", async (event, ctx) => {
 		if (mode === "ignore") return undefined;
 		const config = loader.getConfig();
-		return handleToolCall(event, ctx, config, mode, toolInfo);
+		return handleToolCall(
+			event,
+			ctx,
+			config,
+			mode,
+			toolInfo,
+			appendAutoVerdict,
+		);
 	});
 
 	pi.on("tool_result", async (event, _ctx) => {

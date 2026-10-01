@@ -227,6 +227,12 @@ describe("resolveAuto", () => {
 		expect(resolveAuto({ deny: "no" }).deny).toBe(true);
 	});
 
+	it("treats only an explicit false as disabling the transcript entry", () => {
+		expect(resolveAuto({ transcript: false }).transcript).toBe(false);
+		expect(resolveAuto({ transcript: true }).transcript).toBe(true);
+		expect(resolveAuto({ transcript: "no" }).transcript).toBe(true);
+	});
+
 	it("sanitizes per-question overrides", () => {
 		const resolved = resolveAuto({
 			questions: {

@@ -42,6 +42,7 @@ Without a `decisions` block, eval classification is off and `auto` behaves as `a
 | Field | Default | Meaning |
 |---|---|---|
 | `deny` | `true` | `false` caps every auto verdict (including `errorAction: "deny"`) at `ask` |
+| `transcript` | `true` | `true` appends each live allow/deny verdict to the chat as a custom session entry (visible, never sent to the model); `false` disables it |
 | `yesThreshold` | `0.7` | Boolean probability ≥ this counts as yes |
 | `noThreshold` | `0.3` | ≤ this counts as no; anything between is uncertain |
 | `choiceConfidence` | `0.6` | Top-label probability needed to accept a choice answer |

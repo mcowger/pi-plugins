@@ -103,6 +103,8 @@ export interface AutoQuestionOverride {
 export interface AutoConfig {
 	/** When false, the engine can never deny — verdicts cap at ask. */
 	deny: boolean;
+	/** When true, append a transcript entry for each live auto verdict. */
+	transcript: boolean;
 	/** noul p >= this → YES. */
 	yesThreshold: number;
 	/** noul p <= this → NO; between → UNCERTAIN. */
@@ -155,6 +157,7 @@ const DEFAULT_AUTO_GLOBALS: ThresholdConfig = {
 
 export const DEFAULT_AUTO: AutoConfig = {
 	deny: true,
+	transcript: true,
 	...DEFAULT_AUTO_GLOBALS,
 	backstopThreshold: 40,
 	thresholds: thresholdsFromGlobals(DEFAULT_AUTO_GLOBALS),
@@ -517,6 +520,7 @@ export function resolveAuto(raw: unknown): AutoConfig {
 
 	return {
 		deny: input.deny === false ? false : defaults.deny,
+		transcript: input.transcript === false ? false : defaults.transcript,
 		yesThreshold: thresholds.yesThreshold,
 		noThreshold: thresholds.noThreshold,
 		choiceConfidence: thresholds.choiceConfidence,

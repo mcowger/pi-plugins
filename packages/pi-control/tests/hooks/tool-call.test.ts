@@ -41,6 +41,7 @@ import type {
 import { resolveDecisions } from "../../src/config.js";
 import { clearEvalCache } from "../../src/utils/decisions.js";
 import { clearAutoCache } from "../../src/utils/auto-decisions.js";
+import type { AutoVerdictInfo } from "../../src/utils/auto-transcript.js";
 import type {
 	BashToolCallEvent,
 	ExtensionContext,
@@ -1863,6 +1864,112 @@ describe("auto action via Decisions API", () => {
 		expect((ctx.ui.select as ReturnType<typeof mock>).mock.calls.length).toBe(
 			0,
 		);
+	});
+
+	it("appends a transcript entry for a live allow", async () => {
+		stubOk(autoAnswers());
+		const seen: AutoVerdictInfo[] = [];
+		const result = await handleToolCall(
+			lsEvent("auto-entry-allow"),
+			makeCtx("/tmp"),
+			autoConfig,
+			"enforce",
+			undefined,
+			(info) => seen.push(info),
+		);
+		expect(result).toBeUndefined();
+		expect(seen).toHaveLength(1);
+		expect(seen[0].verdict).toBe("allow");
+		expect(seen[0].tool).toBe("ls");
+		expect(seen[0].command).toBeNull();
+		expect(seen[0].explanation).toContain("backstop score");
+		expect(seen[0].targets).toEqual(["/tmp"]);
+	});
+
+	it("appends a transcript entry for a live deny", async () => {
+		stubOk(
+			autoAnswers({
+				destructive: { type: "noul", noul: 0.95 },
+				scope: {
+					type: "choice",
+					choice: "outside",
+					confidence: 0.9,
+					probabilities: { outside: 0.9, within: 0.1 },
+				},
+			}),
+		);
+		const seen: AutoVerdictInfo[] = [];
+		await handleToolCall(
+			toolEvent("custom_tool", "auto-entry-deny", {}),
+			makeCtx("/tmp"),
+			autoConfig,
+			"enforce",
+			undefined,
+			(info) => seen.push(info),
+		);
+		expect(seen).toHaveLength(1);
+		expect(seen[0].verdict).toBe("deny");
+		expect(seen[0].explanation).toContain("destructive-out-of-scope");
+	});
+
+	it("reports the bash command in the transcript entry", async () => {
+		stubOk(autoAnswers());
+		const seen: AutoVerdictInfo[] = [];
+		await handleToolCall(
+			bashEvent("ls /tmp", "auto-entry-bash"),
+			makeCtx("/tmp"),
+			autoConfig,
+			"enforce",
+			undefined,
+			(info) => seen.push(info),
+		);
+		expect(seen[0]?.command).toBe("ls /tmp");
+	});
+
+	it("does not append a transcript entry for a cached repeat", async () => {
+		stubOk(autoAnswers());
+		const seen: AutoVerdictInfo[] = [];
+		const sink = (info: AutoVerdictInfo) => seen.push(info);
+		const ctx = makeCtx("/tmp");
+		await handleToolCall(
+			lsEvent("auto-entry-c1"),
+			ctx,
+			autoConfig,
+			"enforce",
+			undefined,
+			sink,
+		);
+		await handleToolCall(
+			lsEvent("auto-entry-c2"),
+			ctx,
+			autoConfig,
+			"enforce",
+			undefined,
+			sink,
+		);
+		expect(seen).toHaveLength(1);
+	});
+
+	it("suppresses the transcript entry when auto.transcript is false", async () => {
+		stubOk(autoAnswers());
+		const quiet: ControlsResolvedConfig = {
+			...autoConfig,
+			decisions: resolveDecisions({
+				tokenEnv: "PICONTROLS_TEST_TOKEN",
+				url: "https://example.invalid/decisions",
+				auto: { transcript: false },
+			})!,
+		};
+		const seen: AutoVerdictInfo[] = [];
+		await handleToolCall(
+			lsEvent("auto-entry-quiet"),
+			makeCtx("/tmp"),
+			quiet,
+			"enforce",
+			undefined,
+			(info) => seen.push(info),
+		);
+		expect(seen).toHaveLength(0);
 	});
 
 	it("resolves auto for bash calls too", async () => {

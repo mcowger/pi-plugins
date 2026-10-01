@@ -357,7 +357,7 @@ auto: rule sensitive-read: data_sensitivity=sensitive (sensitive 0.70, ordinary 
 
 **Cost.** One request per unmatched call; repeat calls with the same tool/input/targets/cwd are served from a session cache, cleared on config reload. There is no per-session budget cap. Set a credit limit on the API key, as with eval classification.
 
-**Logging.** Every evaluation appends an `auto` trace to `pi-controls.log`: the exact state and questions sent, raw answers plus token/cost usage, applied thresholds and weights, the rule or score breakdown, and the final verdict.
+**Logging.** Every evaluation appends an `auto` trace to `pi-controls.log`: the exact state and questions sent, raw answers plus token/cost usage, applied thresholds and weights, the rule or score breakdown, and the final verdict. Live allow/deny verdicts are also shown in the transcript as custom entries (`decisions.auto.transcript`, on by default) — durable and visible, but excluded from the model's context.
 
 ---
 
@@ -1155,6 +1155,7 @@ All fields are optional and live under `decisions.auto`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `deny` | `boolean` | When `false`, the engine can never deny — verdicts cap at `ask`. Defaults to `true`. |
+| `transcript` | `boolean` | When `true` (default), each live auto verdict that resolves to allow or deny is appended to the session transcript as a custom entry — visible in the chat, but never sent to the model. Cached verdicts, skipped evaluations, and API errors do not append. |
 | `yesThreshold` | `number` | Boolean probability at/above this → yes. Defaults to `0.7`. |
 | `noThreshold` | `number` | Boolean probability at/below this → no (between → uncertain). Defaults to `0.3`. |
 | `choiceConfidence` | `number` | Choice top-label probability needed for a confident label. Defaults to `0.6`. |

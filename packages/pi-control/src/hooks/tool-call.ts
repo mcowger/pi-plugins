@@ -44,6 +44,7 @@ import {
 } from "../utils/auto-decisions.js";
 import { describeAutoVerdict } from "../utils/auto-explain.js";
 import { buildAutoState } from "../utils/auto-state.js";
+import type { AutoVerdictSink } from "../utils/auto-transcript.js";
 import { type LocalScope, localScopeFromTargets } from "../utils/scope.js";
 import type { AutoSkipReason, AutoTrace, EvalTrace } from "../utils/logger.js";
 
@@ -380,6 +381,7 @@ async function resolveAutoAction(args: {
 	sessionAllowed: boolean;
 	evalClassified: boolean;
 	toolInfo?: ToolInfo;
+	onAutoVerdict?: AutoVerdictSink;
 }): Promise<AutoOutcome> {
 	const {
 		ctx,
@@ -391,6 +393,7 @@ async function resolveAutoAction(args: {
 		sessionAllowed,
 		evalClassified,
 		toolInfo,
+		onAutoVerdict,
 	} = args;
 
 	if (evalClassified) return { action: "allow", skipped: "eval-classified" };
@@ -453,6 +456,21 @@ async function resolveAutoAction(args: {
 		);
 		const explanation = describeAutoVerdict(result, state.targets);
 		setCachedAutoVerdict(key, { verdict: result.verdict, explanation });
+		if (
+			decisions.auto.transcript &&
+			(result.verdict === "allow" || result.verdict === "deny")
+		) {
+			onAutoVerdict?.({
+				tool: toolName,
+				command:
+					toolName === "bash" && typeof input.command === "string"
+						? input.command
+						: null,
+				verdict: result.verdict,
+				explanation,
+				targets,
+			});
+		}
 		return {
 			action: result.verdict,
 			note: `auto: ${explanation}`,
@@ -525,6 +543,7 @@ async function resolveCombinedAction(args: {
 	sessionAllowed: boolean;
 	evalClassified: boolean;
 	toolInfo?: ToolInfo;
+	onAutoVerdict?: AutoVerdictSink;
 }): Promise<CombinedResolution> {
 	if (args.combinedAction !== "auto") {
 		return { finalAction: args.combinedAction };
@@ -539,6 +558,7 @@ async function resolveCombinedAction(args: {
 		sessionAllowed: args.sessionAllowed,
 		evalClassified: args.evalClassified,
 		toolInfo: args.toolInfo,
+		onAutoVerdict: args.onAutoVerdict,
 	});
 	return {
 		finalAction: outcome.action,
@@ -1097,6 +1117,7 @@ export async function handleToolCall(
 	config: ControlsResolvedConfig,
 	mode: ControlsMode = "enforce",
 	toolInfo?: (name: string) => ToolInfo | undefined,
+	onAutoVerdict?: AutoVerdictSink,
 ): Promise<ToolCallEventResult | undefined> {
 	const cwd = ctx.cwd;
 
@@ -1262,6 +1283,7 @@ export async function handleToolCall(
 				sessionAllowed: bashSessionAllowed,
 				evalClassified,
 				toolInfo: toolInfo?.("bash"),
+				onAutoVerdict,
 			});
 
 		// Cite the rule/pattern that produced the combined action; when `auto` won,
@@ -1437,6 +1459,7 @@ export async function handleToolCall(
 			),
 			evalClassified: false,
 			toolInfo: toolInfo?.(event.toolName),
+			onAutoVerdict,
 		});
 
 	const nudgeMatch = matchResults.find(
