@@ -2,9 +2,10 @@
  * Playback tests over real RPC traces captured from Pi.
  *
  * `fixtures/tintinweb-rpc.jsonl` is a recorded run of `@tintinweb/pi-subagents`
- * (the contract oracle). `fixtures/mine-rpc.jsonl` is a recorded run of this
- * extension. Each fixture is replayed through the current builders, so any drift
- * in result text, details, notifications, or lifecycle payloads fails here.
+ * (the contract oracle). `fixtures/mine-rpc.jsonl` and
+ * `fixtures/mine-abort-rpc.jsonl` are recorded runs of this extension. Each
+ * fixture is replayed through the current builders, so drift in result text,
+ * details, notifications, or lifecycle payloads fails here.
  *
  * The traces were captured with the real binary in RPC mode against the same
  * isolated agent dirs; see the comparison harness referenced in the commit.
@@ -264,6 +265,38 @@ describe("playback: current builders reproduce recorded RPC traces", () => {
 
 	it("matches this extension's own recorded trace", () => {
 		replay("mine");
+	});
+
+	it("normalizes a terminal steered notification for Paseo", () => {
+		const records = load("mine-abort");
+		const terminal = must(
+			probe(records, "subagents:completed"),
+			"steered terminal event",
+		);
+		const details: Rec = notification(records).message.details;
+		const run = new SubagentRun({
+			id: terminal.id,
+			subagentType: terminal.type,
+			displayName: terminal.type,
+			description: terminal.description,
+			outputFile: details.outputFile,
+			startedAt: T0,
+			maxTurns: details.maxTurns,
+		});
+		run.toolUses = terminal.toolUses;
+		run.turnCount = details.turnCount;
+		run.lifetimeUsage.input = terminal.tokens.input;
+		run.lifetimeUsage.output = terminal.tokens.output;
+		setSystemTime(new Date(T0 + details.durationMs));
+		run.transition(terminal.status, { summary: terminal.result });
+
+		expect(run.status).toBe("steered");
+		const notificationDetails = buildNotificationDetails(run, 500);
+		expect(notificationDetails.status).toBe(details.status);
+		expect(notificationDetails.resultPreview).toBe(details.resultPreview);
+		expect(buildNotificationText(run)).toContain(
+			"(wrapped up at the turn limit)",
+		);
 	});
 
 	it("keeps the intentional fail-closed difference for unknown types", () => {

@@ -26,7 +26,8 @@ cannot carry orchestration through `ctx.executeTool()`.
 
 Verified against `@tintinweb/pi-subagents` 0.7.3 by replaying recorded Pi RPC
 traces from both packages side by side (see `tests/fixtures/` and
-`tests/playback.test.ts`). These are the items intended to match byte for byte:
+`tests/playback.test.ts`). These traces pin the shared tool surface; intentional
+differences are listed below.
 
 | Surface | What aligns |
 |---|---|
@@ -38,7 +39,7 @@ traces from both packages side by side (see `tests/fixtures/` and
 | Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
 | Notification | `subagent-notification` custom type, the `NotificationDetails` fields (id/status/outputFile/…), delivered `{ deliverAs: "followUp", triggerTurn: true }` (content and suppression differ — see differences) |
 | `get_subagent_result` | Summary text and `details: null` |
-| Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered` — Paseo maps `completed`→completed, `error`→failed, `aborted`/`stopped`→canceled, else running |
+| Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered`; internal runs keep this vocabulary, terminal notification details map `steered` to `completed` for Paseo, and `get_subagent_result` keeps `steered`. |
 | Lifecycle events | `subagents:created` / `started` / `completed` / `failed` / `steered` with tintinweb's payloads |
 | Definition discovery | `<agentDir>/agents/<name>.md` with trusted `<cwd>/.pi/agents/<name>.md` overrides |
 
@@ -48,8 +49,9 @@ drift silently.
 
 ## Explicit differences
 
-These are intentional and pinned by tests or by the personal design spec. They
-do not affect the fields Paseo's tintinweb adapter reads.
+These are intentional and pinned by tests or by the personal design spec. The
+Paseo-facing notification keeps its existing fields; the status value below is
+normalized to Paseo's provider-subagent enum.
 
 | Area | `@tintinweb/pi-subagents` | This extension | Reason |
 |---|---|---|---|
@@ -62,6 +64,7 @@ do not affect the fields Paseo's tintinweb adapter reads.
 | `get_subagent_result` schema | Has `verbose` | No `verbose` | Not implemented in v1 |
 | `prompt_mode` default | `replace` when omitted | `append` when omitted (gotgenes default) | Seeds set `prompt_mode: replace` explicitly |
 | `locked` | Not supported (0.7.3) | `locked: true` or a field list, gotgenes-style | Spec §4.4 pinned model/thinking |
+| Terminal notification status | `steered` | `completed` | `steered` is the terminal soft-turn-limit result; Paseo's provider-subagent enum has no `steered`. The notification text and `get_subagent_result` retain the wrap-up status. |
 | Transcript file | `.output` text file under a `/tmp/pi-subagents-*` directory | Pi session JSONL under `<agentDir>/subagents/<run-id>/` | Spec §8 uses the session file |
 | Extra lifecycle event | — | Also emits `subagents:child:session-created` / `subagents:child:disposed` | pi-control's in-process child convention |
 | Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |

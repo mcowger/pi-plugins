@@ -24,7 +24,11 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 - **`steer_subagent` schema.** `agent_id` and `message` required; no `cancel`.
 - **Status vocabulary.** `running`, `background`, `completed`, `steered`,
   `aborted`, `stopped`, `error`. Terminal states are immutable
-  (`SubagentRun.transition` throws). Never emit `failed`/`canceled`/`Done`.
+  (`SubagentRun.transition` throws). Normalize terminal `steered` to
+  `completed` in Paseo notification details; keep the internal run status and
+  `get_subagent_result` status as `steered`. A `subagents:steered` event from
+  the steering action does not mean the child finished. Never emit
+  `failed`/`canceled`/`Done`.
 - **Provider errors map to `error`.** A child whose last assistant response has
   `stopReason: "error"` transitions to `error` (`resolveTerminalStatus`), not
   `completed`. Pinned by `tests/runtime.test.ts` and the live `error` scenario.
@@ -47,7 +51,9 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   tintinweb's `<task-notification>` XML: Paseo renders a custom message's text
   as a timeline item, so XML would show verbatim. Paseo reads the structured
   fields from `details`, not the content. The Pi TUI renderer registered in
-  `index.ts` is a nicety for non-Paseo use.
+  `index.ts` is a nicety for non-Paseo use. Paseo's provider-subagent status
+  enum has no `steered`, so terminal notification details use `completed` for a
+  soft turn-limit wrap-up; the text still labels the wrap-up.
 - **A claimed result suppresses only the wake-up turn, never the notification.**
   The notification is always sent because Paseo's tintinweb adapter derives the
   child's terminal status from its `details`; suppressing the message entirely

@@ -191,7 +191,7 @@ export function buildNotificationDetails(
 	return {
 		id: run.id,
 		description: run.description ?? "",
-		status: run.status,
+		status: run.status === "steered" ? "completed" : run.status,
 		toolUses: run.toolUses,
 		turnCount: run.turnCount,
 		maxTurns: run.maxTurns,

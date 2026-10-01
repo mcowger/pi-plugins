@@ -4,12 +4,15 @@
  * Canonicalizes both traces, masking run-dependent values (ids, paths, token
  * counts, durations), projecting details onto the fields Paseo actually reads,
  * and reporting structural differences. Known intentional deviations are
- * excluded: the unknown-type fallback and the extra `subagents:child:*` events.
+ * excluded: explanatory background-result text, notification presentation,
+ * the unknown-type fallback, terminal `steered` status normalization, and the
+ * extra `subagents:child:*` events.
  *
  * tintinweb varies run-to-run in optional, passthrough fields (`cost`,
  * `modelName`, `usage`, `maxTurns`) and in lifecycle-event emission, so those are
- * informational here; the strict comparison covers tool results and
- * notifications. Our lifecycle payloads are pinned exactly by playback tests.
+ * informational here; the strict comparison covers tool-result contract
+ * markers/details and notification details. Notification text differs by
+ * design. Our lifecycle payloads are pinned exactly by playback tests.
  *
  * Usage:
  *   bun tests/live/compare.ts [scenario] [mine] [tintinweb]
@@ -127,6 +130,22 @@ function isBackgroundDetails(details: Rec | undefined): boolean {
 	return details?.status === "background";
 }
 
+function canonicalBackgroundResultText(text: string): string {
+	const withoutNote = text.replace(
+		/^Note: run_in_background is deprecated and ignored;[^\n]*\n\n/,
+		"",
+	);
+	const lines = withoutNote.split("\n");
+	const outputFileLine = lines.findIndex((line) =>
+		/^Output file:\s*\S+$/.test(line),
+	);
+	return maskText(
+		outputFileLine < 0
+			? withoutNote
+			: lines.slice(0, outputFileLine + 1).join("\n"),
+	);
+}
+
 /** The unknown-type call: tintinweb falls back, this extension fails closed. */
 function isUnknownTypeResult(record: Rec): boolean {
 	if (record.type !== "tool_execution_end" || record.toolName !== "Agent")
@@ -170,17 +189,24 @@ function canonicalTranscript(records: Rec[]): Transcript {
 				? BACKGROUND_DETAIL_KEYS
 				: FOREGROUND_DETAIL_KEYS;
 			const projected = details == null ? null : project(details, keys);
+			const canonicalText =
+				record.toolName === "Agent" && isBackgroundDetails(details ?? undefined)
+					? canonicalBackgroundResultText(text)
+					: maskText(text);
 			strict.push(
-				`END ${record.toolName} err=${record.isError}\n${maskText(text)}\n${JSON.stringify(canonical(projected))}`,
+				`END ${record.toolName} err=${record.isError}\n${canonicalText}\n${JSON.stringify(canonical(projected))}`,
 			);
 			continue;
 		}
 		if (record.type === "message_end" && record.message?.role === "custom") {
 			const details = project(record.message.details, NOTIFICATION_KEYS);
+			// A soft turn-limit wrap-up is terminal, but Paseo's descriptor enum
+			// represents that outcome as `completed`.
+			if (details.status === "steered") details.status = "completed";
 			// resultPreview is model-generated prose, not a contract field.
 			if ("resultPreview" in details) details.resultPreview = "<RESULT>";
 			strict.push(
-				`CUSTOM ${record.message.customType}\n${maskText(record.message.content ?? "")}\n${JSON.stringify(canonical(details))}`,
+				`CUSTOM ${record.message.customType}\n${JSON.stringify(canonical(details))}`,
 			);
 		}
 	}

@@ -135,6 +135,18 @@ describe("transcript wire shapes", () => {
 		});
 	});
 
+	it("maps terminal steered status to completed in Paseo notification details", () => {
+		const run = makeRun();
+		run.transition("steered", { summary: "wrapped up at the turn limit" });
+
+		expect(run.status).toBe("steered");
+		expect(buildNotificationDetails(run, 500).status).toBe("completed");
+		expect(buildNotificationText(run)).toContain(
+			"wrapped up at the turn limit",
+		);
+		expect(buildGetResultText(run)).toContain("Status: steered");
+	});
+
 	it("includes the full final summary in the notification, plain text only", () => {
 		const run = makeRun();
 		run.transition("completed", { summary: "pong" });
