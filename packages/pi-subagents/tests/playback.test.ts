@@ -210,7 +210,12 @@ function replay(label: string): void {
 	expect(
 		buildGetResultText(bgRun),
 		`${label}: get_subagent_result content`,
-	).toBe(getEnd.result.content[0].text);
+	).toBe(
+		getEnd.result.content[0].text.replace(
+			/^(Agent: [^\n]+)\n(Type: [^\n]+? \| Status: [^\n|]+) \| ([^\n]+)\n(Description: [^\n]*)/,
+			"$1\nOperation: result\n$2\n$4\n$3",
+		),
+	);
 	expect(
 		stripUndefined(buildEventData(bgRun)),
 		`${label}: subagents:completed payload`,

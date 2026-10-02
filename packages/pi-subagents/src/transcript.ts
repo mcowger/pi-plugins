@@ -361,7 +361,37 @@ export function buildForegroundResultText(run: SubagentRun): string {
 	);
 }
 
-export function buildGetResultText(run: SubagentRun): string {
+export type SubagentOperation = "wait" | "result" | "steer";
+
+export function buildOperationDetails(
+	run: SubagentRun,
+	operation: SubagentOperation,
+) {
+	return {
+		agentId: run.id,
+		operation,
+		subagentType: run.subagentType,
+		description: run.description ?? "",
+		status: run.status,
+	};
+}
+
+export function buildOperationHeader(
+	run: SubagentRun,
+	operation: SubagentOperation,
+): string {
+	return (
+		`Agent: ${run.id}\n` +
+		`Operation: ${operation}\n` +
+		`Type: ${run.subagentType} | Status: ${run.status}\n` +
+		`Description: ${run.description ?? ""}`
+	);
+}
+
+export function buildGetResultText(
+	run: SubagentRun,
+	operation: "wait" | "result" = "result",
+): string {
 	const statsParts = [`Tool uses: ${run.toolUses}`];
 	const tokens = tokenString(run);
 	if (tokens) statsParts.push(tokens);
@@ -370,9 +400,8 @@ export function buildGetResultText(run: SubagentRun): string {
 	statsParts.push(`Duration: ${formatDuration(run.startedAt, run.endedAt)}`);
 
 	let output =
-		`Agent: ${run.id}\n` +
-		`Type: ${run.displayName} | Status: ${run.status} | ${statsParts.join(" | ")}\n` +
-		`Description: ${run.description ?? ""}\n\n`;
+		`${buildOperationHeader(run, operation)}\n` +
+		`${statsParts.join(" | ")}\n\n`;
 	if (
 		run.status === "running" ||
 		run.status === "queued" ||
@@ -401,13 +430,14 @@ export function buildSteerSentText(run: SubagentRun): string {
 	if (run.contextPercent != null)
 		stateParts.push(`context ${Math.round(run.contextPercent)}% full`);
 	return (
+		`${buildOperationHeader(run, "steer")}\n\n` +
 		`Steering message sent to agent ${run.id}. The agent will process it after its current tool execution.\n` +
 		`Current state: ${stateParts.join(" · ")}`
 	);
 }
 
 export function buildSteerNotRunningText(run: SubagentRun): string {
-	return `Agent "${run.id}" is not running (status: ${run.status}). Cannot steer a non-running agent.`;
+	return `${buildOperationHeader(run, "steer")}\n\nAgent "${run.id}" is not running (status: ${run.status}). Cannot steer a non-running agent.`;
 }
 
 /** `subagents:created` payload, matching tintinweb. */

@@ -180,13 +180,30 @@ describe("transcript wire shapes", () => {
 		expect(escapeXml('a & b < c > d "e"')).toBe('a &amp; b &lt; c &gt; d "e"');
 	});
 
-	it("get_subagent_result text matches tintinweb", () => {
-		const run = makeRun();
+	it("builds the identity header with a separate stats line", () => {
+		const run = makeRun({ displayName: "explore-display" });
+		run.toolUses = 2;
 		run.transition("completed", { summary: "pong" });
 		const text = buildGetResultText(run);
-		expect(text).toContain("Agent: 9f2a");
-		expect(text).toContain("Type: explore | Status: completed | Tool uses: 0");
-		expect(text).toContain("Description: cmp background");
+		// The header names the subagent type (not the display name) and omits stats.
+		expect(text).toContain(
+			"Agent: 9f2a\nOperation: result\nType: explore | Status: completed\nDescription: cmp background",
+		);
+		const lines = text.split("\n");
+		const statsIndex = lines.findIndex((line) => line.includes("Tool uses:"));
+		expect(statsIndex).toBeGreaterThan(3);
+		expect(lines[statsIndex]).toContain("Tool uses: 2");
+		expect(lines[2]).not.toContain("Tool uses:");
+		expect(text.endsWith("pong")).toBe(true);
+	});
+
+	it("labels wait operations in the get result header", () => {
+		const run = makeRun({ displayName: "explore-display" });
+		run.transition("completed", { summary: "pong" });
+		const text = buildGetResultText(run, "wait");
+		expect(text).toContain(
+			"Agent: 9f2a\nOperation: wait\nType: explore | Status: completed\nDescription: cmp background",
+		);
 		expect(text.endsWith("pong")).toBe(true);
 	});
 });

@@ -1,6 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
 	type AgentToolResult,
+	type AgentToolUpdateCallback,
 	type ExtensionToolContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
@@ -26,6 +27,8 @@ import {
 	buildNotFoundText,
 	buildNotificationDetails,
 	buildNotificationText,
+	buildOperationDetails,
+	buildOperationHeader,
 	writeResultFile,
 	buildStartedEvent,
 	buildSteeredEvent,
@@ -402,10 +405,18 @@ export function buildGetResultTool() {
 			_toolCallId: string,
 			params: { agent_id: string; wait?: boolean },
 			signal?: AbortSignal,
+			onUpdate?: AgentToolUpdateCallback<unknown>,
 		): Promise<AgentToolResult<unknown>> {
 			const agentId = requireNonEmpty(params.agent_id, "agent_id");
 			const run = getRunRegistry().get(agentId);
 			if (!run) return textResult(buildNotFoundText(agentId));
+			const operation = params.wait === true ? "wait" : "result";
+			onUpdate?.(
+				textResult(
+					buildOperationHeader(run, operation),
+					buildOperationDetails(run, operation),
+				),
+			);
 			if (params.wait === true) {
 				// Aborting the parent turn should stop the child, not orphan it.
 				const onAbort = () =>
@@ -418,9 +429,10 @@ export function buildGetResultTool() {
 					signal?.removeEventListener("abort", onAbort);
 				}
 			}
-			// tintinweb's followup result carries text only; the Paseo adapter
-			// correlates by agent id from the spawn call.
-			return textResult(buildGetResultText(run));
+			return textResult(
+				buildGetResultText(run, operation),
+				buildOperationDetails(run, operation),
+			);
 		},
 	};
 }
@@ -436,11 +448,23 @@ export function buildSteerTool(deps: SubagentToolDeps) {
 		async execute(
 			_toolCallId: string,
 			params: { agent_id: string; message: string },
+			_signal?: AbortSignal,
+			onUpdate?: AgentToolUpdateCallback<unknown>,
 		): Promise<AgentToolResult<unknown>> {
 			const agentId = requireNonEmpty(params.agent_id, "agent_id");
 			const run = getRunRegistry().get(agentId);
 			if (!run) return textResult(buildNotFoundText(agentId));
-			if (run.terminal) return textResult(buildSteerNotRunningText(run));
+			if (run.terminal)
+				return textResult(
+					buildSteerNotRunningText(run),
+					buildOperationDetails(run, "steer"),
+				);
+			onUpdate?.(
+				textResult(
+					buildOperationHeader(run, "steer"),
+					buildOperationDetails(run, "steer"),
+				),
+			);
 
 			const session = run.childSession as {
 				isStreaming?: boolean;
@@ -455,7 +479,10 @@ export function buildSteerTool(deps: SubagentToolDeps) {
 				"subagents:steered",
 				buildSteeredEvent(run, params.message),
 			);
-			return textResult(buildSteerSentText(run));
+			return textResult(
+				buildSteerSentText(run),
+				buildOperationDetails(run, "steer"),
+			);
 		},
 	};
 }
