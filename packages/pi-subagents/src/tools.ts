@@ -26,6 +26,7 @@ import {
 	buildNotFoundText,
 	buildNotificationDetails,
 	buildNotificationText,
+	writeResultFile,
 	buildStartedEvent,
 	buildSteeredEvent,
 	buildSteerNotRunningText,
@@ -352,6 +353,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 						failed ? "subagents:failed" : "subagents:completed",
 						buildEventData(finished),
 					);
+					finished.resultFile = writeResultFile(finished);
 					// Always send the notification: Paseo's tintinweb adapter derives the
 					// child's terminal status from its `details`. Only the wake-up turn is
 					// suppressed when a caller already claimed the result.

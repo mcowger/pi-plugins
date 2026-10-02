@@ -49,6 +49,7 @@ export class SubagentRun {
 	readonly maxTurns?: number;
 	readonly modelName?: string;
 	outputFile?: string;
+	/** Final result written to disk on completion; advertised in the notification. */ resultFile?: string;
 
 	toolUses = 0;
 	turnCount = 0;

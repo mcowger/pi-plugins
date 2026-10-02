@@ -45,9 +45,10 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   `twin`, `thinking: …`, `inherit context`, `background`, `max turns: …`.
 - **Notification.** Custom type `subagent-notification`, the
   `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
-  The content is a status line plus the child's **final summary**, delivered in
-  full while it fits in `NOTIFICATION_RESULT_LIMIT` (~10k chars); beyond that it
-  is truncated with a note to call `get_subagent_result`. It is plain text, not
+  The content is a short dash-delimited block: a status line plus
+  `Result:` (a `result.md` written beside the transcript) and `Transcript:`
+  paths. The result is never inlined; if the write fails it points at
+  `get_subagent_result`. It is plain text, not
   tintinweb's `<task-notification>` XML: Paseo renders a custom message's text
   as a timeline item, so XML would show verbatim. Paseo reads the structured
   fields from `details`, not the content. The Pi TUI renderer registered in
@@ -104,9 +105,9 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 These are intentional and must remain. Do not "fix" them to match tintinweb; do
 update `tests/playback.test.ts` if the behavior changes on purpose.
 
-- **Notification content carries the result**, not tintinweb's
-  `<task-notification>` XML: a status line plus the child's final summary (full
-  up to `NOTIFICATION_RESULT_LIMIT`, then a truncation note). Paseo renders a
+- **Notification content carries paths, not the result**, and is not tintinweb's
+  `<task-notification>` XML: a dash-delimited status line plus `Result:` and
+  `Transcript:` file paths. Paseo renders a
   custom message's text as a timeline item. The structured fields still ride in
   `details`.
 - **A claimed result suppresses the wake-up turn but still sends the

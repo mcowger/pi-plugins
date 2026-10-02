@@ -6,7 +6,6 @@ import {
 	buildGetResultText,
 	buildNotificationDetails,
 	buildNotificationText,
-	NOTIFICATION_RESULT_LIMIT,
 	notificationDeliveryOptions,
 	escapeXml,
 	formatTaskNotification,
@@ -147,26 +146,23 @@ describe("transcript wire shapes", () => {
 		expect(buildGetResultText(run)).toContain("Status: steered");
 	});
 
-	it("includes the full final summary in the notification, plain text only", () => {
+	it("notifies with a dash-delimited block pointing at the result file", () => {
 		const run = makeRun();
 		run.transition("completed", { summary: "pong" });
+		run.resultFile = "/tmp/run/result.md";
 		const text = buildNotificationText(run);
 		expect(text).toContain("completed");
-		expect(text).toContain("pong");
+		expect(text).toContain("Result: /tmp/run/result.md");
+		expect(text).not.toContain("pong");
 		expect(text).not.toContain("<");
 		// Paseo merges it with the parent's preceding text; lead with a blank line.
-		expect(text.startsWith("\n\n")).toBe(true);
+		expect(text.startsWith("\n\n-----")).toBe(true);
 	});
 
-	it("truncates an oversized summary and points at get_subagent_result", () => {
+	it("falls back to get_subagent_result when no result file was written", () => {
 		const run = makeRun();
-		run.transition("completed", {
-			summary: "x".repeat(NOTIFICATION_RESULT_LIMIT + 10),
-		});
-		const text = buildNotificationText(run);
-		expect(text).toContain("truncated");
-		expect(text).toContain("get_subagent_result");
-		expect(text.length).toBeLessThan(NOTIFICATION_RESULT_LIMIT + 500);
+		run.transition("completed", { summary: "pong" });
+		expect(buildNotificationText(run)).toContain("get_subagent_result");
 	});
 
 	it("suppresses only the wake-up turn for a claimed result", () => {

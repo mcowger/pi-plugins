@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { SubagentRun } from "./run.js";
 import type { SubagentStatus } from "./status.js";
 
@@ -204,8 +206,9 @@ export function buildNotificationDetails(
 }
 
 /**
- * Completed notification text: a status line followed by the child's final
- * summary, delivered in full while it fits inside `NOTIFICATION_RESULT_LIMIT`.
+ * Completed notification text: a short dash-delimited block with the status
+ * line and the paths of the result file and transcript. The result itself is
+ * never inlined.
  *
  * Paseo renders a custom message's text as a timeline item in addition to the
  * adapter mapping and merges it with the parent's preceding assistant text, so
@@ -235,21 +238,34 @@ export function buildNotificationText(run: SubagentRun): string {
 			run.status === "steered" ? " (wrapped up at the turn limit)" : "";
 		header = `Agent "${label}" completed${steered}${stats}.`;
 	}
-	const result = run.resultText?.trim();
-	let body: string;
-	if (!result) {
-		body = header;
-	} else if (result.length <= NOTIFICATION_RESULT_LIMIT) {
-		body = `${header}\n\n${result}`;
-	} else {
-		body =
-			`${header}\n\n${result.slice(0, NOTIFICATION_RESULT_LIMIT)}\n\n` +
-			`...(final response truncated at ${NOTIFICATION_RESULT_LIMIT} characters; ` +
-			"call get_subagent_result for the full output)";
-	}
+	const rule = "-----";
+	const lines = [rule, header];
+	if (run.resultFile) lines.push(`Result: ${run.resultFile}`);
+	else if (run.resultText?.trim())
+		lines.push("Result: call get_subagent_result for the output.");
+	if (run.outputFile) lines.push(`Transcript: ${run.outputFile}`);
+	lines.push(rule);
 	// Lead with a blank line: Paseo concatenates consecutive assistant-message
 	// timeline items, so without it the notice runs into the parent's own text.
-	return `\n\n${body}`;
+	return `\n\n${lines.join("\n")}`;
+}
+
+/**
+ * Write the child's final result next to its transcript so the parent can read
+ * it on demand. Returns the path, or undefined when there is nothing to write
+ * or the write fails (the notification then falls back to get_subagent_result).
+ */
+export function writeResultFile(run: SubagentRun): string | undefined {
+	const result = run.resultText?.trim();
+	if (!result || !run.outputFile) return undefined;
+	const path = join(dirname(run.outputFile), "result.md");
+	if (!isWireSafePath(path)) return undefined;
+	try {
+		writeFileSync(path, `${result}\n`);
+		return path;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -266,9 +282,6 @@ export function notificationDeliveryOptions(run: SubagentRun): {
 } {
 	return { deliverAs: "followUp", triggerTurn: !run.resultRequested };
 }
-
-/** Full-result budget for the completion notification before it points at the tool. */
-export const NOTIFICATION_RESULT_LIMIT = 10_000;
 
 /** Structured `<task-notification>` block, matching Claude Code's XML shape. */
 export function formatTaskNotification(
