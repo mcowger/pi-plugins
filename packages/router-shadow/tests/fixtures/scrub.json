@@ -1,0 +1,52 @@
+[
+  {
+    "name": "nested assignment after a non-secret label",
+    "input": "/tmp/creds/credentials-2: dns_cloudflare_api_token=cfut_AAAAbbbbCCCC123",
+    "expected": "/tmp/creds/credentials-2: dns_cloudflare_api_token=[REDACTED]"
+  },
+  {
+    "name": "compose env secrets",
+    "input": "- SECRET=Habloo12Habloo12\n- X_CLIENTSECRET=GOCSPX-abcDEF123\n- TZ=America/Los_Angeles",
+    "expected": "- SECRET=[REDACTED]\n- X_CLIENTSECRET=[REDACTED]\n- TZ=America/Los_Angeles"
+  },
+  {
+    "name": "bare token prefix",
+    "input": "token is cfut_Zz9988776655 ok",
+    "expected": "token is [REDACTED] ok"
+  },
+  {
+    "name": "bearer",
+    "input": "Authorization: Bearer abc.def-123",
+    "expected": "Authorization: Bearer [REDACTED]"
+  },
+  {
+    "name": "quoted json secret",
+    "input": "{\"apiKey\": \"sk-live-XYZ123\", \"name\": \"demo\"}",
+    "expected": "{\"apiKey\": \"[REDACTED]\", \"name\": \"demo\"}"
+  },
+  {
+    "name": "single-quoted password",
+    "input": "password='hunter2' user='matt'",
+    "expected": "password='[REDACTED]' user='matt'"
+  },
+  {
+    "name": "github pat",
+    "input": "use ghp_abcdefghijklmnopqrstuvwxyz0123 here",
+    "expected": "use [REDACTED] here"
+  },
+  {
+    "name": "aws key id",
+    "input": "AKIAABCDEFGHIJKLMNOP is the id",
+    "expected": "[REDACTED] is the id"
+  },
+  {
+    "name": "non-secret names untouched",
+    "input": "model=gpt-6-luna effort: high count=3",
+    "expected": "model=gpt-6-luna effort: high count=3"
+  },
+  {
+    "name": "identifier mentioning token without assignment",
+    "input": "call refreshToken() then getApiKey()",
+    "expected": "call refreshToken() then getApiKey()"
+  }
+]

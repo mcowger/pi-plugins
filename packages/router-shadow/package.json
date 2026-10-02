@@ -1,0 +1,66 @@
+{
+	"name": "@mcowger/router-shadow",
+	"author": "Matt Cowger",
+	"version": "0.1.0",
+	"description": "Shadow-mode model-tier router for pi: logs what Jev would have chosen next to what actually ran, without changing behavior.",
+	"license": "MIT",
+	"type": "module",
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-extension",
+		"router",
+		"shadow"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/mcowger/pi-plugins.git",
+		"directory": "packages/router-shadow"
+	},
+	"homepage": "https://github.com/mcowger/pi-plugins/tree/main/packages/router-shadow#readme",
+	"bugs": {
+		"url": "https://github.com/mcowger/pi-plugins/issues"
+	},
+	"engines": {
+		"bun": ">=1.0"
+	},
+	"files": [
+		"src/",
+		"exemplars.json",
+		"models.json",
+		"README.md",
+		"docs/"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"check": "bun run lint && bun run typecheck",
+		"lint": "bunx biome check src tests",
+		"typecheck": "bunx tsc --noEmit",
+		"format": "bunx biome format --write src tests",
+		"format:check": "bunx biome format src tests",
+		"test": "bun test"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": ">=0.99.0",
+		"@earendil-works/pi-tui": ">=0.99.0"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-tui": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.1",
+		"@earendil-works/pi-coding-agent": "0.99.0",
+		"@earendil-works/pi-tui": "0.99.0",
+		"@types/bun": "^1.3.14",
+		"typescript": "^6.0.3"
+	},
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	}
+}

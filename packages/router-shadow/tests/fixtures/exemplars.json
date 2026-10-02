@@ -1,0 +1,50 @@
+{
+  "line_format": "- [<tier>] <preview>",
+  "lines_first_3": [
+    "- [high] Due to the way the RPC events print, I’ve decided to change the format of the wj output. Here’s the migration guide. # Migrating: activity stream moved from custom messages to custom entries ## What changed and why The activity fan-out prev…",
+    "- [high] Additional verified source: Pi agent-session.ts:3500-3504 naming allowlisted declarable tool activates it even if inactive by default. Thus explicit tools plus codemode/tool_search CAN activate, but callable MCP codemode/deferred bypasses a…",
+    "- [economy] Task: Find where Plexus sends the Codex version (likely a header, user-agent, or version string for OpenAI Codex / gpt-5.x models). Search for \"codex\", \"gpt-5\", version headers, user-agent strings. Return: exact files + line numbers, curren…"
+  ],
+  "preview_examples": [
+    {
+      "prompt": "  Fix   the\nbuild  ",
+      "expected_preview": "Fix the build"
+    },
+    {
+      "prompt": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+      "expected_preview": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww…"
+    },
+    {
+      "prompt": "token=cfut_SECRET12345 please",
+      "expected_preview": "token=[REDACTED] please"
+    }
+  ],
+  "topk_query_key": "original:9",
+  "topk_note": "query vector = that item's vector; the item itself is excluded by the leakage guard",
+  "topk_expected_keys": [
+    "contexts:42",
+    "original:5",
+    "additional:29",
+    "original:8",
+    "original:28",
+    "original:3",
+    "additional:70",
+    "additional:61",
+    "contexts:8",
+    "additional:119",
+    "contexts:17",
+    "contexts:43",
+    "contexts:65",
+    "contexts:23",
+    "contexts:28",
+    "original:4",
+    "additional:58",
+    "contexts:80",
+    "additional:46",
+    "original:27",
+    "contexts:62",
+    "contexts:51",
+    "additional:22",
+    "original:22"
+  ]
+}

@@ -8,15 +8,16 @@
 	],
 	"scripts": {
 		"postinstall": "command -v lefthook >/dev/null 2>&1 && lefthook install || true",
-		"check": "bun run check:pi-control && bun run check:pi-suppress-providers && bun run check:pi-microgpt && bun run check:pi-subagents",
+		"check": "bun run check:pi-control && bun run check:pi-suppress-providers && bun run check:pi-microgpt && bun run check:pi-subagents && bun run check:router-shadow",
 		"check:pi-control": "(cd packages/pi-control && bun run check)",
 		"check:pi-suppress-providers": "(cd packages/pi-suppress-providers && bun run check)",
 		"check:pi-microgpt": "(cd packages/pi-microgpt && bun run check)",
 		"check:pi-subagents": "(cd packages/pi-subagents && bun run check)",
-		"test": "bun install && bun --cwd packages/pi-control test && bun --cwd packages/pi-suppress-providers test && bun --cwd packages/pi-microgpt test && bun --cwd packages/pi-subagents test",
-		"lint": "(cd packages/pi-control && bun run lint) && (cd packages/pi-suppress-providers && bun run lint) && (cd packages/pi-microgpt && bun run lint) && (cd packages/pi-subagents && bun run lint)",
-		"format": "(cd packages/pi-control && bun run format) && (cd packages/pi-suppress-providers && bun run format) && (cd packages/pi-microgpt && bun run format) && (cd packages/pi-subagents && bun run format)",
-		"format:check": "(cd packages/pi-control && bun run format:check) && (cd packages/pi-suppress-providers && bun run format:check) && (cd packages/pi-microgpt && bun run format:check) && (cd packages/pi-subagents && bun run format:check)"
+		"check:router-shadow": "(cd packages/router-shadow && bun run check)",
+		"test": "bun install && bun --cwd packages/pi-control test && bun --cwd packages/pi-suppress-providers test && bun --cwd packages/pi-microgpt test && bun --cwd packages/pi-subagents test && bun --cwd packages/router-shadow test",
+		"lint": "(cd packages/pi-control && bun run lint) && (cd packages/pi-suppress-providers && bun run lint) && (cd packages/pi-microgpt && bun run lint) && (cd packages/pi-subagents && bun run lint) && (cd packages/router-shadow && bun run lint)",
+		"format": "(cd packages/pi-control && bun run format) && (cd packages/pi-suppress-providers && bun run format) && (cd packages/pi-microgpt && bun run format) && (cd packages/pi-subagents && bun run format) && (cd packages/router-shadow && bun run format)",
+		"format:check": "(cd packages/pi-control && bun run format:check) && (cd packages/pi-suppress-providers && bun run format:check) && (cd packages/pi-microgpt && bun run format:check) && (cd packages/pi-subagents && bun run format:check) && (cd packages/router-shadow && bun run format:check)"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.1",

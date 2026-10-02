@@ -1,0 +1,391 @@
+[
+  {
+    "name": "simple with tool calls and image",
+    "entries": [
+      {
+        "type": "session",
+        "id": "s0",
+        "version": 3,
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "cwd": "/w"
+      },
+      {
+        "type": "message",
+        "id": "e1",
+        "parentId": null,
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Fix the failing test"
+            }
+          ]
+        }
+      },
+      {
+        "type": "message",
+        "id": "e2",
+        "parentId": "e1",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Looking."
+            },
+            {
+              "type": "toolCall",
+              "name": "bash",
+              "arguments": {
+                "command": "npm test",
+                "timeout": 60
+              }
+            }
+          ],
+          "api": "openai-responses"
+        }
+      },
+      {
+        "type": "message",
+        "id": "e3",
+        "parentId": "e2",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "toolResult",
+          "content": [
+            {
+              "type": "text",
+              "text": "1 failing"
+            }
+          ],
+          "toolName": "bash"
+        }
+      },
+      {
+        "type": "message",
+        "id": "e4",
+        "parentId": "e3",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Fixed it."
+            }
+          ],
+          "api": "openai-responses"
+        }
+      },
+      {
+        "type": "message",
+        "id": "e5",
+        "parentId": "e4",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Now add a regression test"
+            },
+            {
+              "type": "image",
+              "data": "<bytes omitted>"
+            }
+          ]
+        }
+      }
+    ],
+    "leaf_id": "e5",
+    "expected_messages": [
+      {
+        "role": "user",
+        "text": "Fix the failing test",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": null
+      },
+      {
+        "role": "assistant",
+        "text": "Looking.",
+        "tool_calls": [
+          {
+            "name": "bash",
+            "arguments": "{\"command\":\"npm test\",\"timeout\":60}"
+          }
+        ],
+        "name": null,
+        "has_image": false,
+        "api": "openai-responses"
+      },
+      {
+        "role": "tool",
+        "text": "1 failing",
+        "tool_calls": null,
+        "name": "bash",
+        "has_image": false,
+        "api": null
+      },
+      {
+        "role": "assistant",
+        "text": "Fixed it.",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": "openai-responses"
+      },
+      {
+        "role": "user",
+        "text": "Now add a regression test",
+        "tool_calls": null,
+        "name": null,
+        "has_image": true,
+        "api": null
+      }
+    ],
+    "expected_state": {
+      "task": "classify_request",
+      "conversation": [
+        {
+          "role": "user",
+          "text": "Fix the failing test"
+        },
+        {
+          "role": "assistant",
+          "text": "Looking.",
+          "tool_calls": [
+            {
+              "name": "bash",
+              "arguments": "{\"command\":\"npm test\",\"timeout\":60}"
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "text": "1 failing",
+          "name": "bash"
+        },
+        {
+          "role": "assistant",
+          "text": "Fixed it."
+        },
+        {
+          "role": "user",
+          "text": "Now add a regression test"
+        }
+      ],
+      "structural": {
+        "message_count": 5,
+        "has_tools": false,
+        "tool_count": 0,
+        "has_images": true,
+        "api_type": "responses"
+      }
+    }
+  },
+  {
+    "name": "compaction, branch summary, custom messages",
+    "entries": [
+      {
+        "type": "message",
+        "id": "c1",
+        "parentId": null,
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "old request"
+            }
+          ]
+        }
+      },
+      {
+        "type": "message",
+        "id": "c2",
+        "parentId": "c1",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "old answer"
+            }
+          ],
+          "api": "anthropic-messages"
+        }
+      },
+      {
+        "type": "message",
+        "id": "c3",
+        "parentId": "c2",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "kept request"
+            }
+          ]
+        }
+      },
+      {
+        "type": "compaction",
+        "id": "c4",
+        "parentId": "c3",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "summary": "Summary of the earlier work.",
+        "firstKeptEntryId": "c3"
+      },
+      {
+        "type": "message",
+        "id": "c5",
+        "parentId": "c4",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "continuing"
+            }
+          ],
+          "api": "anthropic-messages"
+        }
+      },
+      {
+        "type": "branch_summary",
+        "id": "c6",
+        "parentId": "c5",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "summary": "Abandoned branch tried X."
+      },
+      {
+        "type": "custom_message",
+        "id": "c7",
+        "parentId": "c6",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "customType": "note",
+        "content": "extension note"
+      },
+      {
+        "type": "custom_message",
+        "id": "c8",
+        "parentId": "c7",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "customType": "wj-pi-subagents-activity",
+        "content": "ui only"
+      },
+      {
+        "type": "message",
+        "id": "c9",
+        "parentId": "c8",
+        "timestamp": "2026-10-02T12:00:00.000Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "latest request"
+            }
+          ]
+        }
+      }
+    ],
+    "leaf_id": "c9",
+    "expected_messages": [
+      {
+        "role": "user",
+        "text": "Summary of the earlier work.",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": null
+      },
+      {
+        "role": "user",
+        "text": "kept request",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": null
+      },
+      {
+        "role": "assistant",
+        "text": "continuing",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": "anthropic-messages"
+      },
+      {
+        "role": "user",
+        "text": "Abandoned branch tried X.",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": null
+      },
+      {
+        "role": "system",
+        "text": "extension note",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": null
+      },
+      {
+        "role": "user",
+        "text": "latest request",
+        "tool_calls": null,
+        "name": null,
+        "has_image": false,
+        "api": null
+      }
+    ],
+    "expected_state": {
+      "task": "classify_request",
+      "conversation": [
+        {
+          "role": "user",
+          "text": "Summary of the earlier work."
+        },
+        {
+          "role": "user",
+          "text": "kept request"
+        },
+        {
+          "role": "assistant",
+          "text": "continuing"
+        },
+        {
+          "role": "user",
+          "text": "Abandoned branch tried X."
+        },
+        {
+          "role": "system",
+          "text": "extension note"
+        },
+        {
+          "role": "user",
+          "text": "latest request"
+        }
+      ],
+      "structural": {
+        "message_count": 6,
+        "has_tools": false,
+        "tool_count": 0,
+        "has_images": false,
+        "api_type": "messages"
+      }
+    }
+  }
+]
