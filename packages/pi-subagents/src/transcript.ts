@@ -206,7 +206,7 @@ export function buildNotificationDetails(
 }
 
 /**
- * Completed notification text: a short dash-delimited block with the status
+ * Completed notification text: a short code-fenced block with the status
  * line and the paths of the result file and transcript. The result itself is
  * never inlined.
  *
@@ -238,7 +238,7 @@ export function buildNotificationText(run: SubagentRun): string {
 			run.status === "steered" ? " (wrapped up at the turn limit)" : "";
 		header = `Agent "${label}" completed${steered}${stats}.`;
 	}
-	const rule = "-----";
+	const rule = "```";
 	const lines = [rule, header];
 	if (run.resultFile) lines.push(`Result: ${run.resultFile}`);
 	else if (run.resultText?.trim())

@@ -45,7 +45,7 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   `twin`, `thinking: …`, `inherit context`, `background`, `max turns: …`.
 - **Notification.** Custom type `subagent-notification`, the
   `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
-  The content is a short dash-delimited block: a status line plus
+  The content is a short code-fenced block: a status line plus
   `Result:` (a `result.md` written beside the transcript) and `Transcript:`
   paths. The result is never inlined; if the write fails it points at
   `get_subagent_result`. It is plain text, not
@@ -106,7 +106,7 @@ These are intentional and must remain. Do not "fix" them to match tintinweb; do
 update `tests/playback.test.ts` if the behavior changes on purpose.
 
 - **Notification content carries paths, not the result**, and is not tintinweb's
-  `<task-notification>` XML: a dash-delimited status line plus `Result:` and
+  `<task-notification>` XML: a code-fenced status line plus `Result:` and
   `Transcript:` file paths. Paseo renders a
   custom message's text as a timeline item. The structured fields still ride in
   `details`.

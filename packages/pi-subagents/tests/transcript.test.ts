@@ -146,7 +146,7 @@ describe("transcript wire shapes", () => {
 		expect(buildGetResultText(run)).toContain("Status: steered");
 	});
 
-	it("notifies with a dash-delimited block pointing at the result file", () => {
+	it("notifies with a fenced block pointing at the result file", () => {
 		const run = makeRun();
 		run.transition("completed", { summary: "pong" });
 		run.resultFile = "/tmp/run/result.md";
@@ -156,7 +156,7 @@ describe("transcript wire shapes", () => {
 		expect(text).not.toContain("pong");
 		expect(text).not.toContain("<");
 		// Paseo merges it with the parent's preceding text; lead with a blank line.
-		expect(text.startsWith("\n\n-----")).toBe(true);
+		expect(text.startsWith("\n\n```\n")).toBe(true);
 	});
 
 	it("falls back to get_subagent_result when no result file was written", () => {
