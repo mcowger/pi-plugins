@@ -39,7 +39,7 @@ describe("transcript wire shapes", () => {
 		expect(() => outputFileLine("/tmp/has space/x.jsonl")).toThrow();
 	});
 
-	it("background content matches tintinweb and carries the Output file line", () => {
+	it("background content carries the wire fields and requires a result read", () => {
 		const run = makeRun();
 		const text = buildBackgroundResultText(run);
 		expect(WIRE_REGEX.exec(text)?.[1]).toBe(
@@ -49,6 +49,10 @@ describe("transcript wire shapes", () => {
 		expect(text).toContain("Agent ID: 9f2a");
 		expect(text).toContain("Type: explore");
 		expect(text).toContain("Description: cmp background");
+		expect(text).toContain("but it won't wake you");
+		expect(text).toContain(
+			"You MUST call get_subagent_result with wait: true for this agent before finishing",
+		);
 		expect(text).toContain("Do not duplicate this agent's work.");
 	});
 
@@ -165,14 +169,8 @@ describe("transcript wire shapes", () => {
 		expect(buildNotificationText(run)).toContain("get_subagent_result");
 	});
 
-	it("suppresses only the wake-up turn for a claimed result", () => {
-		const run = makeRun();
-		expect(notificationDeliveryOptions(run)).toEqual({
-			deliverAs: "followUp",
-			triggerTurn: true,
-		});
-		run.claimResult();
-		expect(notificationDeliveryOptions(run)).toEqual({
+	it("never wakes the parent for a completion notification", () => {
+		expect(notificationDeliveryOptions()).toEqual({
 			deliverAs: "followUp",
 			triggerTurn: false,
 		});

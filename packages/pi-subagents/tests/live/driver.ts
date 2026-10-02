@@ -439,8 +439,8 @@ function toolResultText(record: Rec): string {
 
 async function runWait(rpc: Rpc, tool: string): Promise<void> {
 	// Spawn a background child and immediately block for its result in the same
-	// turn. The waiter claims the result: the notification must still fire so Paseo
-	// learns the child finished, but it must not start a wake-up turn.
+	// turn. The notification must still fire so Paseo learns the child finished,
+	// but completion notifications never start a wake-up turn.
 	await sendPrompt(
 		rpc,
 		"wait-1",

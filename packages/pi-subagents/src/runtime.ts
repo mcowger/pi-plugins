@@ -156,9 +156,8 @@ function agentInstructions(definition: AgentDefinition): string | undefined {
 }
 
 /**
- * Every child closes with a summary: the completion notification (or
- * `get_subagent_result`) delivers the child's final assistant text back to the
- * parent, so that text must stand on its own.
+ * Every child closes with a summary because `get_subagent_result` returns the
+ * child's final assistant text to the parent, so that text must stand on its own.
  */
 const SUBAGENT_SUMMARY_INSTRUCTION =
 	"Before finishing, write a concise summary of what you did and what you " +

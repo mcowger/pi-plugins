@@ -62,6 +62,15 @@ describe("tool schemas", () => {
 		expect(buildSteerTool(noopDeps()).exposure).toBe("model-only");
 	});
 
+	it("requires retrieving every spawned result before finishing", () => {
+		expect(buildAgentTool(noopDeps()).description).toContain(
+			"MUST call get_subagent_result with wait: true for every Agent id",
+		);
+		expect(buildGetResultTool().description).toContain(
+			"MUST call this with wait: true for every id returned by Agent",
+		);
+	});
+
 	it("hides non-policy tools through prepareLoadout", () => {
 		const deps = {
 			...noopDeps(),
@@ -166,7 +175,7 @@ describe("tool schemas", () => {
 });
 
 describe("get_subagent_result", () => {
-	it("claims the result while blocking so no notification fires", async () => {
+	it("waits for and returns the child result", async () => {
 		const run = new SubagentRun({
 			id: "wait-test",
 			subagentType: "explore",
@@ -177,13 +186,15 @@ describe("get_subagent_result", () => {
 			agent_id: "wait-test",
 			wait: true,
 		});
-		expect(run.resultRequested).toBe(true);
 		run.transition("completed", { summary: "pong" });
-		await pending;
-		expect(run.resultRequested).toBe(true);
+		const result = await pending;
+		const text = (result.content as Array<{ type: string; text?: string }>)
+			.map((block) => block.text ?? "")
+			.join("\n");
+		expect(text).toContain("pong");
 	});
 
-	it("claims a terminal result on a non-blocking read", async () => {
+	it("returns a terminal result on a non-blocking read", async () => {
 		const run = new SubagentRun({
 			id: "poll-test",
 			subagentType: "explore",
@@ -191,8 +202,13 @@ describe("get_subagent_result", () => {
 		});
 		run.transition("completed", { summary: "pong" });
 		getRunRegistry().add(run);
-		await buildGetResultTool().execute("8", { agent_id: "poll-test" });
-		expect(run.resultRequested).toBe(true);
+		const result = await buildGetResultTool().execute("8", {
+			agent_id: "poll-test",
+		});
+		const text = (result.content as Array<{ type: string; text?: string }>)
+			.map((block) => block.text ?? "")
+			.join("\n");
+		expect(text).toContain("pong");
 	});
 
 	it("cancels the child when the waiting tool call is aborted", async () => {

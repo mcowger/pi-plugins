@@ -41,14 +41,17 @@ Agent {
 ```
 
 Every child runs in the background. The spawn result returns the run id and its
-transcript path immediately; block for the result when you need it:
+transcript path immediately. You must retrieve every child result before
+finishing:
 
 ```text
 get_subagent_result { agent_id: "<id-from-the-spawn-result>", wait: true }
 ```
 
-A completion notification carries the child's final summary, so you can also keep
-working and be woken when it finishes.
+Completion notifications update Paseo's child status, but they do not wake the
+parent. You MUST call `get_subagent_result` for every spawned child before
+finishing. To preserve parallelism, spawn independent children first, continue
+other work, then retrieve each result.
 
 ## Tools
 
@@ -84,9 +87,11 @@ Read a run's current or terminal state, or block for it.
 | `agent_id` | yes | The id from the spawn result |
 | `wait` | no | Await terminal state without advancing the child |
 
-`wait: true` returns the result as a tool result and suppresses the notification's
-wake-up turn (the notification is still sent so the UI clears the run). Aborting
-the turn while the wait is pending cancels the child instead of orphaning it.
+`wait: true` blocks until the child finishes and returns its result as a tool
+result. Call this for every ID returned by `Agent` before finishing. The
+completion notification is still sent so Paseo can clear the run, but it never
+wakes the parent. Aborting the turn while the wait is pending cancels the child
+instead of orphaning it.
 
 ### `steer_subagent`
 
@@ -100,11 +105,12 @@ execution.
 
 ### Notifications and transcripts
 
-On completion the child emits a `subagent-notification` custom message: a status
-line plus the child's final summary (in full up to ~10k characters, then a
-truncation note). Every child is instructed to end with a self-contained summary,
-because that text is what the parent receives back. Child sessions persist under
-`<agentDir>/subagents/<run-id>/`.
+On completion the child emits a `subagent-notification` custom message with its
+status and result/transcript paths. Paseo uses its structured details to update
+the UI; the message does not wake the parent. Pi still appends the notification
+to the session, but `triggerTurn: false` prevents it from starting another model
+turn. Retrieve the child's summary with `get_subagent_result`. Child sessions
+persist under `<agentDir>/subagents/<run-id>/`.
 
 ## Agent definitions
 

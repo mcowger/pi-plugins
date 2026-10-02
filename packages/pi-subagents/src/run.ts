@@ -68,8 +68,6 @@ export class SubagentRun {
 	private _disposeChild?: () => void;
 	private _terminationIntent?: "stopped" | "aborted";
 	private _terminationReason?: string;
-	/** Set once a get_subagent_result call claims the result (blocks for it or reads it). */
-	private _resultRequested = false;
 	readonly abortController = new AbortController();
 
 	private settledPromise: Promise<void>;
@@ -131,18 +129,6 @@ export class SubagentRun {
 
 	get terminal(): boolean {
 		return isTerminalStatus(this._status);
-	}
-
-	/**
-	 * True once the result has been claimed by a `get_subagent_result` caller, so
-	 * the completion notification must not fire a redundant turn for it.
-	 */
-	get resultRequested(): boolean {
-		return this._resultRequested;
-	}
-
-	claimResult(): void {
-		this._resultRequested = true;
 	}
 
 	get error(): string | undefined {

@@ -98,15 +98,23 @@ function parseTokens(text: string): {
 }
 
 /**
- * The background result's guidance line deliberately differs from tintinweb's:
- * every child is background, so we tell the model how to block for the result.
- * Mask it so the rest of the recorded content is still compared byte for byte.
+ * The background result's guidance deliberately differs from tintinweb's:
+ * completion notifications don't wake the parent, so it must retrieve results
+ * explicitly. Mask it so the rest of the recorded content is still compared
+ * byte for byte.
  */
 function normalizeGuidance(text: string): string {
 	return text
-		.replace(/Use get_subagent_result[^\n]*/g, "Use get_subagent_result …")
+		.replace(
+			/(?:Use|You MUST call) get_subagent_result[^\n]*/g,
+			"Use get_subagent_result …",
+		)
 		.replace(
 			/You will be notified when this agent completes[^\n]*/g,
+			"You will be notified when this agent completes …",
+		)
+		.replace(
+			/Paseo gets a completion notification[^\n]*/,
 			"You will be notified when this agent completes …",
 		);
 }

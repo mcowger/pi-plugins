@@ -37,7 +37,7 @@ differences are listed below.
 | Background result content | `Agent started in background.` … `Output file: <path>` … `Do not duplicate this agent's work.` (the `get_subagent_result` guidance line differs — see differences) |
 | Background details | `displayName`, `description`, `subagentType`, `tags`, `toolUses`, `tokens`, `durationMs`, `status:"background"`, `agentId` |
 | Tags order | `twin` (append-mode only), `thinking: <level>`, `inherit context`, `background`, `max turns: <n>` |
-| Notification | `subagent-notification` custom type, the `NotificationDetails` fields (id/status/outputFile/…), delivered `{ deliverAs: "followUp", triggerTurn: true }` (content and suppression differ — see differences) |
+| Notification | `subagent-notification` custom type and `NotificationDetails` fields (id/status/outputFile/…); delivery uses `{ deliverAs: "followUp", triggerTurn: false }` so the message updates Paseo without waking the parent |
 | `get_subagent_result` | Summary text and `details: null` |
 | Status vocabulary | `running`, `background`, `completed`, `error`, `aborted`, `stopped`, `steered`; internal runs keep this vocabulary, terminal notification details map `steered` to `completed` for Paseo, and `get_subagent_result` keeps `steered`. |
 | Lifecycle events | `subagents:created` / `started` / `completed` / `failed` / `steered` with tintinweb's payloads |
@@ -70,7 +70,7 @@ normalized to Paseo's provider-subagent enum.
 | Concurrent completion | Group-joins concurrent completions into one batched notification | One `subagent-notification` per child | Paseo correlates each notification individually |
 | Spawn mode | Foreground (blocking, inline result) and background | Always background; `run_in_background` is accepted but ignored (the result notes the deprecation); block for the result with `get_subagent_result { agent_id, wait: true }` | Only a background spawn exposes the transcript path at spawn time, so Paseo can stream the child live |
 | Notification content | `<task-notification>` XML block with the result and transcript footer | Short code-fenced block: status line, `Result: <result.md path>`, `Transcript: <path>`. The result is written to `result.md` beside the transcript and never inlined; falls back to a `get_subagent_result` pointer if the write fails. Structured fields stay in `details` | Keeps the parent's context readable; the parent reads the file on demand. Paseo renders the text as a timeline item, so XML would be shown verbatim |
-| Notification timing | Always notifies and wakes on completion | Always sends the notification (Paseo needs `details` to mark the child finished), but a result already claimed by `get_subagent_result` (`wait: true`, or a terminal read) is delivered with `triggerTurn: false`, so no extra turn | Avoids the redundant wake-up turn without stranding the child's UI state |
+| Notification timing | Always notifies and wakes on completion | Always sends the notification so Paseo can mark the child finished, but always uses `triggerTurn: false`; the parent must retrieve every result with `get_subagent_result` | Avoids stale follow-up turns without stranding the child's UI state. Pi still appends the notification to the session |
 | Child summary | No built-in instruction | A fixed instruction is appended to the child's system prompt to end with a self-contained summary | The final assistant text is what the parent receives back |
 | Lifecycle event emission | Emits `completed`/`failed` for foreground runs too | Emits `created`/`started` for all runs, `completed`/`failed` for background only | Events are not read by Paseo |
 | Operator config | `<agentDir>/subagents.json` (`maxConcurrent`, …) | `<agentDir>/pi-subagents.json` (`maxDepth`, `approvedExtensions`, `excludedExtensions`) | Spec §6 |
@@ -101,7 +101,8 @@ normalized to Paseo's provider-subagent enum.
   a timeout — or aborting a `get_subagent_result { wait: true }` caller — actually
   stops the child session rather than leaving it running.
 - **Completion notifications.** Terminal `subagent-notification` messages use
-  tintinweb's `{ deliverAs: "followUp", triggerTurn: true }` delivery.
+  `{ deliverAs: "followUp", triggerTurn: false }`. They update Paseo's status
+  without waking the parent; the parent retrieves results explicitly.
 - **Transcript visibility.** Every child runs in the background, so the spawn
   result carries one unadorned `Output file: <path>` line and Paseo streams it
   live. Child sessions persist to their own JSONL file under

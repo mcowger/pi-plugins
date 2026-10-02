@@ -32,19 +32,21 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
 - **Provider errors map to `error`.** A child whose last assistant response has
   `stopReason: "error"` transitions to `error` (`resolveTerminalStatus`), not
   `completed`. Pinned by `tests/runtime.test.ts` and the live `error` scenario.
-- **Background result.** Exact tintinweb text, including the unadorned,
-  whitespace-free `Output file: <path>` line. The `get_subagent_result` guidance
-  line deliberately tells the model to use `wait: true` (a deviation).
+- **Background result.** Keep the tintinweb result shape and exact unadorned,
+  whitespace-free `Output file: <path>` line. The guidance tells the model to
+  retrieve every result with `get_subagent_result { wait: true }` (a deviation).
 - **Every child is background.** `Agent` always returns immediately with the id
   and `Output file:` line; `run_in_background` is accepted but ignored. A caller
-  that wants to block uses `get_subagent_result { agent_id, wait: true }`. Only a
-  background spawn exposes the transcript path at spawn time, so Paseo streams
-  the child live. The foreground builders remain only for the recorded fixtures.
+  must call `get_subagent_result` for every returned id before finishing; use
+  `wait: true` to block. Only a background spawn exposes the transcript path at
+  spawn time, so Paseo streams the child live. The foreground builders remain
+  only for the recorded fixtures.
 - **Details shape.** Background: `displayName`, `description`, `subagentType`,
   `tags`, `toolUses`, `tokens`, `durationMs`, `status`, `agentId`. Tag order is
   `twin`, `thinking: …`, `inherit context`, `background`, `max turns: …`.
 - **Notification.** Custom type `subagent-notification`, the
-  `NotificationDetails` shape, and `{ deliverAs: "followUp", triggerTurn: true }`.
+  `NotificationDetails` shape, and
+  `{ deliverAs: "followUp", triggerTurn: false }`.
   The content is a short code-fenced block: a status line plus
   `Result:` (a `result.md` written beside the transcript) and `Transcript:`
   paths. The result is never inlined; if the write fails it points at
@@ -55,13 +57,12 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   `index.ts` is a nicety for non-Paseo use. Paseo's provider-subagent status
   enum has no `steered`, so terminal notification details use `completed` for a
   soft turn-limit wrap-up; the text still labels the wrap-up.
-- **A claimed result suppresses only the wake-up turn, never the notification.**
-  The notification is always sent because Paseo's tintinweb adapter derives the
-  child's terminal status from its `details`; suppressing the message entirely
-  leaves the child stuck "working" in the UI. `get_subagent_result` calls
-  `run.claimResult()` before it blocks (`wait: true`) or when it reads a terminal
-  run, and `notificationDeliveryOptions` then sets `triggerTurn: false` so the
-  blocking caller gets the result as a tool result without a second turn.
+- **Completion notifications never wake the parent.** The notification is
+  always sent because Paseo's tintinweb adapter derives the child's terminal
+  status from its `details`; suppressing the message entirely leaves the child
+  stuck "working" in the UI. Pi still appends the custom message to the parent
+  session, but `triggerTurn: false` prevents it from starting a model turn. The
+  parent must call `get_subagent_result` for every returned id before finishing.
 - **Every child is told to end with a self-contained summary.**
   `SUBAGENT_SUMMARY_INSTRUCTION` is appended to the child's system prompt
   (`appendSystemPrompt`), because the final assistant text is what the parent
@@ -110,9 +111,9 @@ update `tests/playback.test.ts` if the behavior changes on purpose.
   `Transcript:` file paths. Paseo renders a
   custom message's text as a timeline item. The structured fields still ride in
   `details`.
-- **A claimed result suppresses the wake-up turn but still sends the
-  notification**, so Paseo learns the child is done and blocking on
-  `get_subagent_result { wait: true }` costs one tool call, not an extra turn.
+- **Completion notifications do not wake the parent.** They are still sent so
+  Paseo learns the child is done; `get_subagent_result { wait: true }` returns
+  the child output without a second turn.
 - **Always background; `run_in_background` ignored.** tintinweb has foreground
   (blocking, inline result) and background; we always spawn background so Paseo
   can stream the child live. If the caller passes `run_in_background` anyway, the

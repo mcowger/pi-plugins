@@ -269,18 +269,14 @@ export function writeResultFile(run: SubagentRun): string | undefined {
 }
 
 /**
- * Delivery options for the completion notification.
- *
- * The notification is always sent because Paseo's tintinweb adapter derives the
- * child's terminal status from its `details`; suppressing it entirely leaves the
- * child stuck "working". Only the wake-up turn is skipped when a caller already
- * claimed the result with `get_subagent_result`.
+ * Delivery options for the completion notification. Paseo needs the message to
+ * update the child's status, but the parent retrieves results explicitly.
  */
-export function notificationDeliveryOptions(run: SubagentRun): {
+export function notificationDeliveryOptions(): {
 	deliverAs: "followUp";
-	triggerTurn: boolean;
+	triggerTurn: false;
 } {
-	return { deliverAs: "followUp", triggerTurn: !run.resultRequested };
+	return { deliverAs: "followUp", triggerTurn: false };
 }
 
 /** Structured `<task-notification>` block, matching Claude Code's XML shape. */
@@ -338,8 +334,8 @@ export function buildBackgroundResultText(
 		(queued
 			? `Position: queued (max ${options.maxConcurrent ?? 0} concurrent)\n`
 			: "") +
-		`\nYou will be notified when this agent completes, unless you block for it first:\n` +
-		`Use get_subagent_result with wait: true to block for the result (that also replaces the notification), or steer_subagent to send it messages.\n` +
+		`\nPaseo gets a completion notification when this agent finishes, but it won't wake you:\n` +
+		`You MUST call get_subagent_result with wait: true for this agent before finishing.\n` +
 		`Do not duplicate this agent's work.`
 	);
 }

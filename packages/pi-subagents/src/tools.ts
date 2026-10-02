@@ -226,17 +226,18 @@ function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
 
 const AGENT_TOOL_DESCRIPTION =
 	"Spawn exactly one subagent child in the background and return its run id " +
-	"and transcript path. The child runs while you continue; a completion " +
-	"notification wakes you. Use get_subagent_result with wait: true to block " +
-	"for the result (that replaces the notification), or independent calls for " +
-	"parallelism.";
+	"and transcript path. Completion notifications update Paseo but do not wake " +
+	"you. You MUST call get_subagent_result with wait: true for every Agent id " +
+	"before finishing. To preserve parallelism, spawn independent children first, " +
+	"continue other work, then retrieve each result.";
 
 export function buildAgentTool(deps: SubagentToolDeps) {
 	return {
 		name: AGENT_TOOL_NAME,
 		label: "Agent",
 		description: AGENT_TOOL_DESCRIPTION,
-		promptSnippet: "Spawn one background subagent child",
+		promptSnippet:
+			"Spawn one background subagent child and retrieve its result before finishing",
 		// Orchestration tools are declared to the model but never callable through codemode.
 		exposure: "model-only" as const,
 		parameters: SPAWN_PARAMETERS,
@@ -354,9 +355,8 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 						buildEventData(finished),
 					);
 					finished.resultFile = writeResultFile(finished);
-					// Always send the notification: Paseo's tintinweb adapter derives the
-					// child's terminal status from its `details`. Only the wake-up turn is
-					// suppressed when a caller already claimed the result.
+					// Always send the notification so Paseo can update the child's status.
+					// It never wakes the parent; results are retrieved with get_subagent_result.
 					deps.sendMessage(
 						{
 							customType: "subagent-notification",
@@ -364,7 +364,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 							display: true,
 							details: buildNotificationDetails(finished, 500),
 						},
-						notificationDeliveryOptions(finished),
+						notificationDeliveryOptions(),
 					);
 				},
 				onChildCreated: (childSessionId) =>
@@ -395,7 +395,7 @@ export function buildGetResultTool() {
 		name: GET_RESULT_TOOL_NAME,
 		label: "Get subagent result",
 		description:
-			"Check status and retrieve results from a subagent. Use the agent ID returned by Agent. Set wait: true to block until the child finishes and return its result.",
+			"Retrieve a subagent result. You MUST call this with wait: true for every id returned by Agent before finishing.",
 		exposure: "model-only" as const,
 		parameters: GET_RESULT_PARAMETERS,
 		async execute(
@@ -407,9 +407,6 @@ export function buildGetResultTool() {
 			const run = getRunRegistry().get(agentId);
 			if (!run) return textResult(buildNotFoundText(agentId));
 			if (params.wait === true) {
-				// Claim before blocking: the notification fires from the terminal hook,
-				// which runs before this await resumes.
-				run.claimResult();
 				// Aborting the parent turn should stop the child, not orphan it.
 				const onAbort = () =>
 					run.requestTermination("aborted", "parent turn aborted");
@@ -420,8 +417,6 @@ export function buildGetResultTool() {
 				} finally {
 					signal?.removeEventListener("abort", onAbort);
 				}
-			} else if (run.terminal) {
-				run.claimResult();
 			}
 			// tintinweb's followup result carries text only; the Paseo adapter
 			// correlates by agent id from the spawn call.
