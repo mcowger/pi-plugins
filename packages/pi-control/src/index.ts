@@ -18,6 +18,10 @@ import {
 import { clearPromptStore, rememberUserPrompt } from "./utils/auto-state.js";
 import { clearAutoCache } from "./utils/auto-decisions.js";
 import {
+	getControlsModeStore,
+	type ControlsMode,
+} from "./utils/controls-mode.js";
+import {
 	AUTO_ENTRY_TYPE,
 	type AutoTranscriptEntry,
 	type AutoVerdictInfo,
@@ -25,7 +29,7 @@ import {
 	toAutoTranscriptEntry,
 } from "./utils/auto-transcript.js";
 
-export type ControlsMode = "enforce" | "ignore" | "inform";
+export type { ControlsMode };
 
 const MODES: ControlsMode[] = ["enforce", "ignore", "inform"];
 
@@ -43,7 +47,7 @@ const MODE_NOTIFY_TYPE: Record<ControlsMode, "info" | "warning" | "error"> = {
 
 export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	const loader = createConfigLoader();
-	let mode: ControlsMode = "enforce";
+	const modeStore = getControlsModeStore();
 
 	// Forwarded `ask` prompts: register every in-process subagent child the
 	// moment its spawner announces it, and serve this session's inbox while it
@@ -112,6 +116,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	function setWidgetForMode(ctx: {
 		ui: { setWidget: (id: string, lines: string[]) => void };
 	}): void {
+		const mode = modeStore.get();
 		if (mode === "ignore") {
 			ctx.ui.setWidget("pi-controls-mode", ["[pi-controls: IGNORE]"]);
 		} else if (mode === "inform") {
@@ -131,12 +136,13 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	pi.registerShortcut(cycleKey as any, {
 		description: "Cycle pi-controls mode: enforce → ignore → inform",
 		handler: (ctx) => {
-			const currentIndex = MODES.indexOf(mode);
-			mode = MODES[(currentIndex + 1) % MODES.length];
+			const currentIndex = MODES.indexOf(modeStore.get());
+			const next = MODES[(currentIndex + 1) % MODES.length];
+			modeStore.set(next);
 			setWidgetForMode(ctx);
 			ctx.ui.notify(
-				`[pi-controls] Mode set to: ${mode}`,
-				MODE_NOTIFY_TYPE[mode],
+				`[pi-controls] Mode set to: ${next}`,
+				MODE_NOTIFY_TYPE[next],
 			);
 		},
 	});
@@ -147,12 +153,9 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	): Promise<void> {
 		const arg = args.trim().toLowerCase() as ControlsMode;
 		if (MODES.includes(arg)) {
-			mode = arg;
+			modeStore.set(arg);
 			setWidgetForMode(ctx);
-			ctx.ui.notify(
-				`[pi-controls] Mode set to: ${mode}`,
-				MODE_NOTIFY_TYPE[mode],
-			);
+			ctx.ui.notify(`[pi-controls] Mode set to: ${arg}`, MODE_NOTIFY_TYPE[arg]);
 			return;
 		}
 
@@ -164,9 +167,12 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		if (!choice) return;
 		// Parse the mode from the choice label (e.g. "enforce — enforce ...").
 		const selected = choice.split(" — ")[0] as ControlsMode;
-		mode = selected;
+		modeStore.set(selected);
 		setWidgetForMode(ctx);
-		ctx.ui.notify(`[pi-controls] Mode set to: ${mode}`, MODE_NOTIFY_TYPE[mode]);
+		ctx.ui.notify(
+			`[pi-controls] Mode set to: ${selected}`,
+			MODE_NOTIFY_TYPE[selected],
+		);
 	}
 
 	const completionProvider = (prefix: string): AutocompleteItem[] => {
@@ -231,7 +237,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		// Re-arm forwarding against the live context before any tool call.
 		forwardingManager.start(ctx);
 		rememberUserPrompt(ctx.sessionManager.getSessionId(), event.prompt);
-		if (mode === "ignore") return;
+		if (modeStore.get() === "ignore") return;
 		const config = loader.getConfig();
 
 		const activeTools = pi.getActiveTools();
@@ -248,6 +254,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+		const mode = modeStore.get();
 		if (mode === "ignore") return undefined;
 		const config = loader.getConfig();
 		return handleToolCall(

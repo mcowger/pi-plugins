@@ -495,6 +495,8 @@ pi-controls has three modes, switched with `/controls <mode>` (alias `/pi-contro
 
 A non-default mode shows a `[pi-controls: INFORM]` / `[pi-controls: IGNORE]` widget. The mode resets to `enforce` on restart.
 
+The mode is **process-wide**, not per session. In-process subagent children share their parent's process and read the live mode, so `/controls ignore` in the parent disables enforcement in its subagents too (their forwarded asks stop). Out-of-process subagents run their own pi-controls instance and keep their own mode.
+
 ---
 
 ## Subagent Ask Forwarding
@@ -507,6 +509,8 @@ Forwarding is automatic. Nothing needs to be configured, and no other package ne
 - **Out-of-process children** are detected from `PI_SUBAGENT_PARENT_SESSION` (or a known third-party subagent marker), and the parent is resolved from that variable.
 
 A child only waits while the parent is actually draining its inbox. If the parent has exited, stopped polling, or names a different session, the child gives up after a short grace window and the tool call is denied — never silently allowed. A child that has a UI of its own falls back to a local dialog when forwarding is unavailable.
+
+`inform` and `ignore` modes apply to in-process children too (see [Modes](#modes)). A parent running `ignore` never sees a forwarded ask from an in-process child, because the child skips evaluation entirely.
 
 Forwarded-ask state lives under `<agentDir>/extensions/pi-controls-forwarding/`. It is drained and cleaned up per session; only request/response records for in-flight asks are ever present.
 

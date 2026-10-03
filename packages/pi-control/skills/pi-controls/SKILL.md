@@ -79,7 +79,7 @@ JSONC, so `//` comments are fine.
 
 Walk these steps in order. This is where almost all confusion comes from, so use it when explaining a verdict.
 
-**0. Mode.** `/controls enforce|inform|ignore` (or the `cycleKey` shortcut). `ignore` skips everything. `inform` evaluates and shows `would-deny` etc. but never blocks. `enforce` is the default.
+**0. Mode.** `/controls enforce|inform|ignore` (or the `cycleKey` shortcut). `ignore` skips everything — including in-process subagent sessions, which share the mode with their parent (eval classification included). `inform` evaluates and shows `would-deny` etc. but never blocks. `enforce` is the default.
 
 **1. `pathProtection` runs first and can't be overridden** — it blocks even in `inform` mode. Globs are matched against each target's basename *and* full canonical path (minimatch, dotfiles included). Only `"deny"` has any effect. Session allows and saved approvals don't bypass it. `~` is **not** expanded in these globs, so use basename globs (`"*.env"`, `"id_rsa*"`), `**/` globs (`"**/.ssh/**"`), or absolute paths.
 
