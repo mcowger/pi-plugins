@@ -8,13 +8,23 @@ import {
 	type AgentSession,
 	createAgentSession,
 	createCodemodeExtension,
+	createEventBus,
 	createMcpExtension,
 	createToolSearchExtension,
 	DefaultResourceLoader,
+	type EventBus,
 	getAgentDir,
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import {
+	bridgeOutcomeFor,
+	createRunBridge,
+	SUPERPI_SUBAGENT_BRIDGE_CHANNEL,
+	type RunBridge,
+	type SuperpiSubagentBridgeRecord,
+	type SuperpiSubagentBridgeSink,
+} from "./bridge.js";
 import { resolveApprovedExtensionRefs } from "./extensions.js";
 import type { ResolvedInvocation } from "./invocation.js";
 import { childLineage, getLineageRegistry, runWithLineage } from "./lineage.js";
@@ -22,6 +32,7 @@ import {
 	AgentAdmissionError,
 	type ModelLookup,
 	resolveChildModel,
+	resolveDefaultModel,
 	type ResolvedChildModel,
 } from "./model.js";
 import { getRunRegistry, SubagentRun } from "./run.js";
@@ -37,11 +48,11 @@ export interface SpawnRequest {
 	cwd: string;
 	agentDir?: string;
 	parentSessionId: string;
+	/** Run id of the spawning child, when this is a nested grandchild. */
+	parentRunId?: string;
 	parentDepth: number;
 	parentCeiling: number;
 	lookup: ModelLookup;
-	parentModel?: Model<any>;
-	parentThinking?: string;
 	config: OperatorConfig;
 	definition: AgentDefinition;
 	invocation: ResolvedInvocation;
@@ -58,10 +69,40 @@ export interface SpawnRequest {
 	/** In-process child lifecycle, following the pi-control convention. */
 	onChildCreated?: (childSessionId: string) => void;
 	onChildDisposed?: (childSessionId: string) => void;
+	/** Versioned observation bridge sink; absent disables bridge emission. */
+	bridgeSink?: SuperpiSubagentBridgeSink;
 }
 
 function createRunId(): string {
 	return randomBytes(6).toString("hex");
+}
+
+/**
+ * Relay a child session's own bridge bus to the spawning sink.
+ *
+ * A child builds its own resource loader, which creates its own event bus, so a
+ * grandchild's `superpi:subagent:v1` records never reach the root companion.
+ * This forwards them up the ownership chain through the parent's sink without
+ * sharing the parent bus, so the child can never inherit the root signal.
+ */
+export function relayChildBridgeRecords(
+	bus: Pick<EventBus, "on">,
+	sink: SuperpiSubagentBridgeSink,
+): () => void {
+	return bus.on(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, (record) => {
+		if (!isBridgeRecord(record)) return;
+		sink(record);
+	});
+}
+
+function isBridgeRecord(value: unknown): value is SuperpiSubagentBridgeRecord {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Partial<SuperpiSubagentBridgeRecord>;
+	return (
+		record.version === 1 &&
+		typeof record.runId === "string" &&
+		typeof record.sequence === "number"
+	);
 }
 
 /** Short model label, matching tintinweb's tag rendering. */
@@ -185,6 +226,7 @@ function trackRun(
 	session: AgentSession,
 	run: SubagentRun,
 	maxTurns: number | undefined,
+	onActivity?: (event: unknown) => void,
 ): {
 	state: TrackState;
 	unsubscribe: () => void;
@@ -192,6 +234,7 @@ function trackRun(
 	const state: TrackState = { hardAborted: false, softSteered: false };
 	let turns = 0;
 	const unsubscribe = session.subscribe((event) => {
+		onActivity?.(event);
 		if (event.type === "tool_execution_end") {
 			run.toolUses++;
 			return;
@@ -289,8 +332,11 @@ async function runChild(
 	maxTurns: number | undefined,
 	timeoutMinutes: number | undefined,
 	onTerminal: ((run: SubagentRun) => void) | undefined,
+	bridge: RunBridge | undefined,
 ): Promise<void> {
-	const tracker = trackRun(session, run, maxTurns);
+	const tracker = trackRun(session, run, maxTurns, (event) => {
+		bridge?.activity(event);
+	});
 	const disarmTimeout = armRunTimeout(run, timeoutMinutes);
 	try {
 		await session.prompt(promptText);
@@ -340,6 +386,15 @@ async function runChild(
 		} catch {
 			// A terminal hook must never mask the run outcome.
 		}
+		// Sticky terminal: emitted once, after the subscription is gone so no later
+		// activity can follow it. Completion reporting is independent of whether a
+		// caller ever collects the result, so awaiting `get_subagent_result` can
+		// never suppress the terminal record.
+		bridge?.terminal({
+			outcome: bridgeOutcomeFor(run.status),
+			result: run.resultText,
+			reason: run.error ?? run.terminationReason,
+		});
 		run.disposeChild();
 	}
 }
@@ -352,10 +407,19 @@ export async function spawnSubagent(
 	request: SpawnRequest,
 ): Promise<SubagentRun> {
 	const agentDir = request.agentDir ?? getAgentDir();
+
+	// R2.4: resolve the child's defaults from global Pi settings, never from the
+	// parent's live composer selection. Creating the settings manager here keeps
+	// the default resolution and the session's own default source identical.
+	const settingsManager = SettingsManager.create(request.cwd, agentDir);
+	const defaultModel = resolveDefaultModel(
+		request.lookup,
+		settingsManager.getDefaultProvider(),
+		settingsManager.getDefaultModel(),
+	);
 	const resolved = resolveChildModel({
 		lookup: request.lookup,
-		parentModel: request.parentModel,
-		parentThinking: request.parentThinking,
+		defaultModel,
 		invocation: request.invocation,
 	});
 	const extensionRefs = resolveApprovedExtensionRefs(
@@ -369,10 +433,9 @@ export async function spawnSubagent(
 		excluded: Object.freeze([...(request.excludedTools ?? [])]),
 	};
 
-	const modelName =
-		request.parentModel && resolved.model.id !== request.parentModel.id
-			? shortModelLabel(resolved.model)
-			: undefined;
+	const modelName = request.invocation.modelInput
+		? shortModelLabel(resolved.model)
+		: undefined;
 
 	const id = createRunId();
 	const run = new SubagentRun({
@@ -403,9 +466,18 @@ export async function spawnSubagent(
 	const systemPrompt = [instructions, SUBAGENT_SUMMARY_INSTRUCTION].filter(
 		(entry): entry is string => Boolean(entry),
 	);
+	// A child builds its own resource loader and event bus, so a grandchild's
+	// bridge records would never reach the root sink. Give the child an explicit
+	// bus and relay that channel to the spawning sink. The bus is never the
+	// parent's, so the child cannot inherit the root signal and become root.
+	const childEventBus = createEventBus();
+	const relayChildBridge = request.bridgeSink
+		? relayChildBridgeRecords(childEventBus, request.bridgeSink)
+		: undefined;
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: request.cwd,
 		agentDir,
+		eventBus: childEventBus,
 		extensionFactories: [
 			createCodemodeExtension({ mode: "on" }),
 			createToolSearchExtension(),
@@ -419,7 +491,6 @@ export async function spawnSubagent(
 	});
 	await resourceLoader.reload();
 
-	const settingsManager = SettingsManager.create(request.cwd, agentDir);
 	// Session-local activation only; never saved to global settings.
 	settingsManager.applyOverrides({
 		defaultTools: ["+codemode", "+tool_search"],
@@ -458,6 +529,7 @@ export async function spawnSubagent(
 	run.attachChild(session, () => {
 		run.abortController.signal.removeEventListener("abort", abortChild);
 		lineageRegistry.delete(childSessionId);
+		relayChildBridge?.();
 		request.onChildDisposed?.(childSessionId);
 		session.dispose();
 	});
@@ -477,6 +549,19 @@ export async function spawnSubagent(
 	}
 
 	getRunRegistry().add(run);
+	const bridge = request.bridgeSink
+		? createRunBridge(request.bridgeSink, {
+				runId: run.id,
+				parentRunId: request.parentRunId,
+				parentSessionId: request.parentSessionId,
+				childSessionId,
+				toolCallId: request.toolCallId,
+				title: run.description ?? run.displayName,
+				transcriptPath: run.outputFile,
+				cwd: request.cwd,
+			})
+		: undefined;
+	bridge?.created();
 	void runWithLineage(lineage, () =>
 		runChild(
 			run,
@@ -485,6 +570,7 @@ export async function spawnSubagent(
 			request.invocation.maxTurns,
 			request.definition.timeoutMinutes,
 			request.onTerminal,
+			bridge,
 		),
 	);
 

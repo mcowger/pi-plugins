@@ -5,6 +5,7 @@ import {
 	type ExtensionToolContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import type { SuperpiSubagentBridgeRecord } from "./bridge.js";
 import {
 	AGENT_TOOL_NAME,
 	GET_RESULT_TOOL_NAME,
@@ -68,12 +69,20 @@ export interface SubagentToolDeps {
 	loadConfig(): OperatorConfig;
 	/** Session-scoped facts captured on session_start. */
 	getSessionState(): SessionState | undefined;
+	/**
+	 * Superpi root integration mode, read lazily at tool execution from the
+	 * companion's session-scoped root signal. Never derived from the
+	 * environment: children inherit it and would misidentify as the root.
+	 */
+	isSuperpiRoot(): boolean;
 	/** Announce an in-process child before its extensions bind. */
 	emitChildCreated(parentSessionId: string, childSessionId: string): void;
 	/** Announce a child's disposal after a terminal state. */
 	emitChildDisposed(childSessionId: string): void;
 	/** Emit a cross-extension lifecycle event on the parent's bus. */
 	emitEvent(channel: string, data: unknown): void;
+	/** Emit a versioned observation record on the superpi subagent bridge. */
+	emitBridge(record: SuperpiSubagentBridgeRecord): void;
 }
 
 function currentState(
@@ -227,6 +236,48 @@ function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
 	} as AgentToolResult<unknown>;
 }
 
+/**
+ * Wait for a run to settle, but stop promptly when the parent turn is
+ * interrupted. Superpi root sessions leave background children running
+ * (Superpi R6.4), so this path rejects the aborted caller instead of calling
+ * `requestTermination`. The run stays registered and still settles normally, so
+ * its terminal notification is delivered once it finishes.
+ */
+function waitForSettledUntilAbort(
+	run: SubagentRun,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	if (!signal) return run.settled;
+	return new Promise<void>((resolve, reject) => {
+		let done = false;
+		const onAbort = () => {
+			if (done) return;
+			done = true;
+			signal.removeEventListener("abort", onAbort);
+			reject(new Error("get_subagent_result wait aborted; child left running"));
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		if (signal.aborted) {
+			onAbort();
+			return;
+		}
+		run.settled.then(
+			() => {
+				if (done) return;
+				done = true;
+				signal.removeEventListener("abort", onAbort);
+				resolve();
+			},
+			(error) => {
+				if (done) return;
+				done = true;
+				signal.removeEventListener("abort", onAbort);
+				reject(error);
+			},
+		);
+	});
+}
+
 const AGENT_TOOL_DESCRIPTION =
 	"Spawn exactly one subagent child in the background and return its run id " +
 	"and transcript path. Completion notifications update Paseo but do not wake " +
@@ -334,11 +385,10 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 				cwd: state.cwd,
 				agentDir: state.agentDir,
 				parentSessionId: state.lineage.sessionId,
+				parentRunId: lineage.runId,
 				parentDepth: lineage.depth,
 				parentCeiling: lineage.ceiling,
 				lookup: ctx.modelRegistry,
-				parentModel: ctx.model,
-				parentThinking: ctx.thinkingLevel,
 				config: state.config,
 				definition,
 				invocation,
@@ -348,6 +398,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 				includedTools,
 				excludedTools: cleanList(params.excluded_tools, "excluded_tools"),
 				extensions: cleanList(params.extensions, "extensions"),
+				bridgeSink: deps.emitBridge,
 				onTerminal: (finished) => {
 					const failed =
 						finished.status === "error" ||
@@ -393,7 +444,7 @@ export function buildAgentTool(deps: SubagentToolDeps) {
 	};
 }
 
-export function buildGetResultTool() {
+export function buildGetResultTool(deps: SubagentToolDeps) {
 	return {
 		name: GET_RESULT_TOOL_NAME,
 		label: "Get subagent result",
@@ -418,15 +469,23 @@ export function buildGetResultTool() {
 				),
 			);
 			if (params.wait === true) {
-				// Aborting the parent turn should stop the child, not orphan it.
-				const onAbort = () =>
-					run.requestTermination("aborted", "parent turn aborted");
-				if (signal?.aborted) onAbort();
-				else signal?.addEventListener("abort", onAbort, { once: true });
-				try {
-					await run.settled;
-				} finally {
-					signal?.removeEventListener("abort", onAbort);
+				if (deps.isSuperpiRoot()) {
+					// Superpi R6.4: interrupting the parent turn leaves owned background
+					// children running. Stop waiting (reject the aborted caller) without
+					// requesting termination; root `session_shutdown` still stops owned
+					// children through the existing cleanup path.
+					await waitForSettledUntilAbort(run, signal);
+				} else {
+					// Aborting the parent turn should stop the child, not orphan it.
+					const onAbort = () =>
+						run.requestTermination("aborted", "parent turn aborted");
+					if (signal?.aborted) onAbort();
+					else signal?.addEventListener("abort", onAbort, { once: true });
+					try {
+						await run.settled;
+					} finally {
+						signal?.removeEventListener("abort", onAbort);
+					}
 				}
 			}
 			return textResult(
@@ -488,5 +547,5 @@ export function buildSteerTool(deps: SubagentToolDeps) {
 }
 
 export function buildSubagentTools(deps: SubagentToolDeps) {
-	return [buildAgentTool(deps), buildGetResultTool(), buildSteerTool(deps)];
+	return [buildAgentTool(deps), buildGetResultTool(deps), buildSteerTool(deps)];
 }

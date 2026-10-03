@@ -76,17 +76,51 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   by name, so a changed description is contract-neutral.
 - **Lifecycle events.** `subagents:created` / `started` / `completed` / `failed` /
   `steered` with tintinweb's payloads (built by `transcript.ts`).
+- **Superpi observation bridge.** `index.ts` also emits every run on the
+  versioned `superpi:subagent:v1` bus channel via `src/bridge.ts`. Each record is
+  a serializable envelope `{ version: 1, runId, sequence, type, … }` with
+  `type: "created" | "activity" | "terminal"`, distinct `runId` / `toolCallId` /
+  `childSessionId` identities, and `parentRunId` for nested grandchildren.
+  Sequence is per-run, monotonic, and starts at 1. Activity covers message and
+  tool start/update/end plus turn boundaries, and streaming `message_update` /
+  `tool_execution_update` records preserve the native `assistantMessageEvent`
+  (including its live `partial`), usage, and tool partial results. Each record
+  carries the child `cwd` when known and is bounded by the per-record cap;
+  oversized records become an explicit omission marker that keeps identity and
+  `transcriptPath` for recovery instead of silently clipping strings. The
+  terminal record is sticky: it is emitted once after the child subscription
+  closes, and no later activity or result collection can reopen it.
+  Outcome uses the host vocabulary (`completed`, `steered`, `canceled`,
+  `failed`) while internal run status keeps `aborted`/`stopped`/`error`. The
+  bridge is observation-only — no steering, resume, queue, or child control —
+  and it never changes completion notification delivery
+  (`triggerTurn: false`).
 - **Thinking is map-driven.** Validate levels only through
   `getSupportedThinkingLevels(model)`. Never hardcode a thinking-level enum or a
   model name. A definition's unsupported level is dropped; a caller's is refused.
 - **Fail closed on admission.** A refusal throws before any session/file/network
   work and creates no run and no id.
-- **Cancellation stops the child.** `SubagentRun.requestTermination` aborts its
-  `AbortController`; `spawnSubagent` listens on that signal and calls
-  `session.abort()`. Keep the wiring: without it, termination only records intent
-  and the child keeps running. The per-definition `timeout_minutes` timer and an
-  aborted `get_subagent_result { wait: true }` caller both terminate through it,
-  and `run.terminationReason` becomes the terminal error.
+- **Cancellation stops the child — except under Superpi root.**
+  `SubagentRun.requestTermination` aborts its `AbortController`;
+  `spawnSubagent` listens on that signal and calls `session.abort()`. Keep the
+  wiring: without it, termination only records intent and the child keeps
+  running. The per-definition `timeout_minutes` timer and an aborted
+  `get_subagent_result { wait: true }` caller both terminate through it, and
+  `run.terminationReason` becomes the terminal error. Scoped exception
+  authorized by Superpi requirement R6.4 ("parent turn interruption leaves
+  background children running"): when the extension runs under the Superpi root,
+  an aborted `get_subagent_result { wait: true }` caller stops waiting and
+  rejects without calling `requestTermination`; the child stays registered and
+  running until it settles on its own or the root `session_shutdown` stops owned
+  children through the existing cleanup path. The companion is the only owner of
+  the `--superpi-companion-root` launch flag and announces root identity on the
+  public `superpi:root:v1` event-bus channel after its root session starts; this
+  extension subscribes to that channel, records the signaled session ids, and
+  checks the currently bound session lazily at tool execution. It never
+  registers the flag itself (a second registration is a duplicate-flag
+  diagnostic) and never derives root from inherited environment (children share
+  the root env). This exception changes no tool schema, result shape, notification,
+  or lifecycle event, so the general wire contract is unchanged.
 - **Depth.** `maxDepth` is finite (default `1`); per-agent `maxDepth` only
   narrows; at the ceiling the spawner is removed and gate-blocked.
 - **Tool policy.** `included_tools` / `excluded_tools` freeze at admission and

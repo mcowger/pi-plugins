@@ -107,6 +107,26 @@ normalized to Paseo's provider-subagent enum.
   result carries one unadorned `Output file: <path>` line and Paseo streams it
   live. Child sessions persist to their own JSONL file under
   `<agentDir>/subagents/<run-id>/`.
+- **Versioned observation bridge.** `src/bridge.ts` projects each owned run onto
+  the `superpi:subagent:v1` bus channel. Records are `{ version: 1, runId,
+  sequence, type, ... }` with `created` / `activity` / `terminal` types, distinct
+  run, tool-call, and child-session identities, and `parentRunId` for nested
+  grandchildren. Activity includes message and tool start/update/end plus turn
+  boundaries, with the native `assistantMessageEvent` (including its live
+  `partial`), usage, and tool partial results preserved. Records carry the child
+  `cwd` when known and are bounded per record; an oversized record is replaced by
+  an explicit omission marker that keeps identity and `transcriptPath` for
+  recovery. The terminal record is sticky and independent of result collection;
+  the bridge is observation-only and never controls a child. See `AGENTS.md` for
+  the invariant and `src/bridge.ts` for the exported types.
+
+**Independent child defaults (R2.4).** A newly admitted child resolves its model
+from the caller (unless locked), then the definition, then the global Pi
+default; it never inherits the parent's live composer model. When nothing pins
+thinking, `createAgentSession` applies the configured global thinking default
+the same way. Definition-level thinking is still validated against the resolved
+child model, caller-level thinking is still refused when unsupported, and
+tier/context settings are a separate companion concern and are unchanged.
 
 **Child context files.** Children build their own `DefaultResourceLoader`, so they
 resolve `AGENTS.md` / `CLAUDE.md` for their own cwd; the parent's

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
+import {
+	SUPERPI_SUBAGENT_BRIDGE_CHANNEL,
+	type SuperpiSubagentBridgeRecord,
+} from "../src/bridge.js";
 import { SubagentRun } from "../src/run.js";
-import { armRunTimeout, resolveTerminalStatus } from "../src/runtime.js";
+import {
+	armRunTimeout,
+	relayChildBridgeRecords,
+	resolveTerminalStatus,
+} from "../src/runtime.js";
 
 describe("armRunTimeout", () => {
 	it("aborts the run with a timeout reason", async () => {
@@ -77,5 +86,52 @@ describe("resolveTerminalStatus", () => {
 				undefined,
 			),
 		).toEqual({ status: "completed" });
+	});
+});
+
+describe("relayChildBridgeRecords", () => {
+	it("forwards a grandchild record from the child-local bus and stops on cleanup", () => {
+		const bus = createEventBus();
+		const forwarded: SuperpiSubagentBridgeRecord[] = [];
+		const stop = relayChildBridgeRecords(bus, (record) =>
+			forwarded.push(record),
+		);
+		const grandchild: SuperpiSubagentBridgeRecord = {
+			version: 1,
+			runId: "grandchild",
+			sequence: 1,
+			type: "created",
+			parentRunId: "child",
+		};
+
+		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, grandchild);
+		expect(forwarded).toEqual([grandchild]);
+		// Identities survive unchanged; the relay never rewrites the record.
+		expect(forwarded[0]?.parentRunId).toBe("child");
+
+		stop();
+		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, {
+			...grandchild,
+			sequence: 2,
+		});
+		expect(forwarded).toHaveLength(1);
+	});
+
+	it("drops values that are not version-1 bridge records", () => {
+		const bus = createEventBus();
+		const forwarded: unknown[] = [];
+		const stop = relayChildBridgeRecords(bus, (record) =>
+			forwarded.push(record),
+		);
+
+		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, { hello: "world" });
+		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, {
+			version: 2,
+			runId: "x",
+			sequence: 1,
+		});
+		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, null);
+		expect(forwarded).toEqual([]);
+		stop();
 	});
 });

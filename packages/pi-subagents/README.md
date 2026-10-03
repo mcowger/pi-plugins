@@ -127,8 +127,8 @@ The frontmatter follows the `@gotgenes/pi-subagents` format:
 | `description` | filename | Human-facing description |
 | `display_name` | — | UI display name |
 | `tools` | seven built-ins | Complete allowlist: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, or extension/MCP tool names. `none` means no tools. Comma scalar, flow list, or block list |
-| `model` | inherit parent | Exact `provider/modelId` or a fuzzy name |
-| `thinking` | inherit parent | Validated against the resolved model's `thinkingLevelMap` |
+| `model` | global default | Exact `provider/modelId` or a fuzzy name; never the parent's live composer model |
+| `thinking` | global default | Validated against the resolved model's `thinkingLevelMap` |
 | `max_turns` | unlimited | Soft cap, then a five-turn grace window before abort |
 | `timeout_minutes` | disabled | Abort the child after this many wall-clock minutes (any positive number); a timed-out or cancelled wait aborts the child too |
 | `prompt_mode` | `append` | `append` wraps the body in `<agent_instructions>`; `replace` appends it raw |
@@ -140,13 +140,15 @@ The frontmatter follows the `@gotgenes/pi-subagents` format:
 | `maxDepth` | inherit | Per-agent depth ceiling that only narrows |
 
 A `locked:` declaration is the only case where a spawn caller's value is
-discarded; otherwise the caller wins and the definition fills the gaps. The
-definition body is appended to the child's system prompt per `prompt_mode`.
+discarded; otherwise the caller wins and the definition fills the gaps. When
+neither the caller nor the definition pins a model or thinking level, the child
+uses the global Pi default, not the parent's current composer selection (R2.4).
+The definition body is appended to the child's system prompt per `prompt_mode`.
 
 Thinking levels are never hardcoded. A definition's unsupported level is dropped
-so the child inherits rather than clamping to `off`; a caller's unsupported level
-is refused. The resolved model and level are asserted after the child binds and
-before its first request.
+so the child uses the global default rather than clamping to `off`; a caller's
+unsupported level is refused. The resolved model and level are asserted after
+the child binds and before its first request.
 
 Example (`explore.md`):
 

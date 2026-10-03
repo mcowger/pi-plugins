@@ -46,12 +46,11 @@ function resolve(
 	def: AgentDefinition,
 	model: Model<any> | undefined,
 	params: { model?: string; thinking?: string } = {},
-	parent?: { parentModel?: Model<any>; parentThinking?: string },
+	defaultModel?: Model<any>,
 ) {
 	return resolveChildModel({
 		lookup: lookup(model),
-		parentModel: parent?.parentModel,
-		parentThinking: parent?.parentThinking,
+		defaultModel,
 		invocation: resolveInvocation(def, params),
 	});
 }
@@ -62,11 +61,11 @@ describe("resolveChildModel", () => {
 		expect(resolve(definition({ model: "plexus/m" }), model).model).toBe(model);
 	});
 
-	it("inherits the parent model when nothing pins one", () => {
-		const parent = fakeModel("plexus", "parent");
-		expect(
-			resolve(definition(), undefined, {}, { parentModel: parent }).model,
-		).toBe(parent);
+	it("uses the global default model when nothing pins one", () => {
+		const globalDefault = fakeModel("plexus", "global-default");
+		expect(resolve(definition(), undefined, {}, globalDefault).model).toBe(
+			globalDefault,
+		);
 	});
 
 	it("refuses when no model exists anywhere", () => {
@@ -84,27 +83,22 @@ describe("resolveChildModel", () => {
 	});
 
 	it("refuses an unresolvable caller model", () => {
-		const parent = fakeModel("plexus", "parent");
+		const globalDefault = fakeModel("plexus", "global-default");
 		expect(() =>
-			resolve(
-				definition(),
-				undefined,
-				{ model: "plexus/nope" },
-				{ parentModel: parent },
-			),
+			resolve(definition(), undefined, { model: "plexus/nope" }, globalDefault),
 		).toThrow(AgentAdmissionError);
 	});
 
-	it("falls back to the parent for an unresolvable definition model", () => {
-		const parent = fakeModel("plexus", "parent");
+	it("falls back to the global default for an unresolvable definition model", () => {
+		const globalDefault = fakeModel("plexus", "global-default");
 		expect(
 			resolve(
 				definition({ model: "plexus/nope" }),
 				undefined,
 				{},
-				{ parentModel: parent },
+				globalDefault,
 			).model,
-		).toBe(parent);
+		).toBe(globalDefault);
 	});
 
 	it("resolves a model fuzzily when the exact ref is unknown", () => {
@@ -141,16 +135,19 @@ describe("resolveChildModel", () => {
 		).toBeUndefined();
 	});
 
-	it("inherits a supported parent thinking level", () => {
-		const model = fakeModel("plexus", "m", true);
+	it("validates a definition thinking level against the global default model", () => {
+		const globalDefault = fakeModel("plexus", "global-default", true);
 		expect(
-			resolve(
-				definition({ model: "plexus/m" }),
-				model,
-				{},
-				{ parentThinking: "low" },
-			).thinking,
+			resolve(definition({ thinking: "low" }), undefined, {}, globalDefault)
+				.thinking,
 		).toBe("low");
+	});
+
+	it("leaves thinking undefined when nothing pins one", () => {
+		const globalDefault = fakeModel("plexus", "global-default", true);
+		expect(
+			resolve(definition(), undefined, {}, globalDefault).thinking,
+		).toBeUndefined();
 	});
 
 	it("only supports off for a non-reasoning model", () => {

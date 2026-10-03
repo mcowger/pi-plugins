@@ -19,6 +19,26 @@ export interface ResolvedChildModel {
 	thinking?: ModelThinkingLevel;
 }
 
+/**
+ * Global Pi default model, resolved independently of the parent composer.
+ *
+ * R2.4: a newly spawned child does not inherit the parent's live model choice.
+ * The definition or caller may still pin one; otherwise the child uses the
+ * configured global default, and `createAgentSession` applies the matching
+ * global default thinking level when nothing pins that either.
+ */
+export function resolveDefaultModel(
+	lookup: ModelLookup,
+	provider: string | undefined,
+	modelId: string | undefined,
+): Model<any> | undefined {
+	if (provider && modelId) {
+		const found = lookup.find(provider, modelId);
+		if (found) return found;
+	}
+	return availableModels(lookup)[0];
+}
+
 /** A refused admission. Thrown before any session or network work happens. */
 export class AgentAdmissionError extends Error {
 	constructor(message: string) {
@@ -107,38 +127,41 @@ export function resolveModelString(
 /**
  * Resolve and validate the child's model and thinking level.
  *
- * Model: caller wins unless locked; otherwise the definition, then the parent.
- * A definition's unresolvable string falls back to the parent; a caller's does
- * not. Thinking is vocabulary-checked and then map-checked against the resolved
- * model; an explicit unsupported level refuses, an inherited one is dropped.
+ * Model: caller wins unless locked; otherwise the definition, then the global
+ * default (`defaultModel`). The parent composer is never consulted. A
+ * definition's unresolvable string falls back to the global default; a caller's
+ * does not. Thinking is vocabulary-checked and then map-checked against the
+ * resolved model; an explicit unsupported caller level refuses, and an
+ * unsupported definition level is dropped so `createAgentSession` applies the
+ * global default thinking instead.
  */
 export function resolveChildModel(input: {
 	lookup: ModelLookup;
-	parentModel?: Model<any>;
-	parentThinking?: string;
+	/** Global default resolved from Pi settings, independent of the parent. */
+	defaultModel?: Model<any>;
 	invocation: ResolvedInvocation;
 }): ResolvedChildModel {
-	const { invocation, parentModel } = input;
+	const { invocation, defaultModel } = input;
 
 	let model: Model<any> | undefined;
 	if (!invocation.modelInput) {
-		model = parentModel;
+		model = defaultModel;
 	} else {
 		const resolved = resolveModelString(invocation.modelInput, input.lookup);
 		if (typeof resolved === "string") {
 			if (invocation.modelFromParams) throw new AgentAdmissionError(resolved);
-			model = parentModel;
+			model = defaultModel;
 		} else {
 			model = resolved;
 		}
 	}
 	if (!model) {
 		throw new AgentAdmissionError(
-			`no model resolved for the child: the agent defines none, the call supplied none, and the parent has no model`,
+			`no model resolved for the child: the agent defines none, the call supplied none, and no global default model is available`,
 		);
 	}
 
-	const candidate = invocation.thinking ?? input.parentThinking;
+	const candidate = invocation.thinking;
 	if (candidate === undefined) return { model };
 
 	const supported = new Set<string>(getSupportedThinkingLevels(model));

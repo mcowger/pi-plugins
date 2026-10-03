@@ -21,10 +21,16 @@ function noopDeps() {
 			excludedExtensions: [],
 		}),
 		getSessionState: () => undefined,
+		isSuperpiRoot: () => false,
 		emitChildCreated: () => {},
 		emitChildDisposed: () => {},
 		emitEvent: () => {},
+		emitBridge: () => {},
 	};
+}
+
+function superpiDeps() {
+	return { ...noopDeps(), isSuperpiRoot: () => true };
 }
 
 function requiredOf(tool: { parameters: unknown }): string[] {
@@ -86,7 +92,7 @@ describe("tool schemas", () => {
 
 	it("declares the model-only orchestration exposure", () => {
 		expect(buildAgentTool(noopDeps()).exposure).toBe("model-only");
-		expect(buildGetResultTool().exposure).toBe("model-only");
+		expect(buildGetResultTool(noopDeps()).exposure).toBe("model-only");
 		expect(buildSteerTool(noopDeps()).exposure).toBe("model-only");
 	});
 
@@ -94,7 +100,7 @@ describe("tool schemas", () => {
 		expect(buildAgentTool(noopDeps()).description).toContain(
 			"MUST call get_subagent_result with wait: true for every Agent id",
 		);
-		expect(buildGetResultTool().description).toContain(
+		expect(buildGetResultTool(noopDeps()).description).toContain(
 			"MUST call this with wait: true for every id returned by Agent",
 		);
 	});
@@ -210,7 +216,7 @@ describe("get_subagent_result", () => {
 			displayName: "explore",
 		});
 		getRunRegistry().add(run);
-		const pending = buildGetResultTool().execute("7", {
+		const pending = buildGetResultTool(noopDeps()).execute("7", {
 			agent_id: "wait-test",
 			wait: true,
 		});
@@ -228,7 +234,7 @@ describe("get_subagent_result", () => {
 		});
 		getRunRegistry().add(run);
 		const { updates, onUpdate } = captureUpdates();
-		const pending = buildGetResultTool().execute(
+		const pending = buildGetResultTool(noopDeps()).execute(
 			"7a",
 			{ agent_id: "wait-update", wait: true },
 			undefined,
@@ -266,7 +272,7 @@ describe("get_subagent_result", () => {
 		});
 		run.transition("completed", { summary: "pong" });
 		getRunRegistry().add(run);
-		const result = await buildGetResultTool().execute("8", {
+		const result = await buildGetResultTool(noopDeps()).execute("8", {
 			agent_id: "poll-test",
 		});
 		expect(textOf(result)).toContain("pong");
@@ -281,7 +287,7 @@ describe("get_subagent_result", () => {
 		});
 		run.transition("completed", { summary: "pong" });
 		getRunRegistry().add(run);
-		const result = await buildGetResultTool().execute("8a", {
+		const result = await buildGetResultTool(noopDeps()).execute("8a", {
 			agent_id: "poll-details",
 		});
 		expect(textOf(result)).toContain(
@@ -304,7 +310,7 @@ describe("get_subagent_result", () => {
 		});
 		getRunRegistry().add(run);
 		const controller = new AbortController();
-		const pending = buildGetResultTool().execute(
+		const pending = buildGetResultTool(noopDeps()).execute(
 			"9",
 			{ agent_id: "abort-test", wait: true },
 			controller.signal,
@@ -324,7 +330,7 @@ describe("get_subagent_result", () => {
 		getRunRegistry().add(run);
 		const controller = new AbortController();
 		controller.abort();
-		const pending = buildGetResultTool().execute(
+		const pending = buildGetResultTool(noopDeps()).execute(
 			"9a",
 			{ agent_id: "pre-abort-test", wait: true },
 			controller.signal,
@@ -342,7 +348,7 @@ describe("get_subagent_result", () => {
 		});
 		getRunRegistry().add(run);
 		const controller = new AbortController();
-		const pending = buildGetResultTool().execute(
+		const pending = buildGetResultTool(noopDeps()).execute(
 			"9b",
 			{ agent_id: "listener-test", wait: true },
 			controller.signal,
@@ -361,7 +367,7 @@ describe("get_subagent_result", () => {
 		});
 		getRunRegistry().add(run);
 		const controller = new AbortController();
-		const result = await buildGetResultTool().execute(
+		const result = await buildGetResultTool(noopDeps()).execute(
 			"9c",
 			{ agent_id: "poll-abort-test" },
 			controller.signal,
@@ -369,6 +375,109 @@ describe("get_subagent_result", () => {
 		controller.abort();
 		expect(run.terminationIntent).toBeUndefined();
 		expect(textOf(result)).toContain("still running");
+	});
+
+	it("leaves the child running when a Superpi root wait is aborted", async () => {
+		const run = new SubagentRun({
+			id: "superpi-abort-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(run);
+		const controller = new AbortController();
+		const pending = buildGetResultTool(superpiDeps()).execute(
+			"10",
+			{ agent_id: "superpi-abort-test", wait: true },
+			controller.signal,
+		);
+		controller.abort();
+		await expect(pending).rejects.toThrow("child left running");
+		// R6.4: the owned child is not terminated, and abort never reaches it.
+		expect(run.terminationIntent).toBeUndefined();
+		expect(run.terminal).toBe(false);
+		expect(run.status).toBe("running");
+		// It still settles later and a follow-up read returns the result.
+		run.transition("completed", { summary: "pong" });
+		const result = await buildGetResultTool(superpiDeps()).execute("10b", {
+			agent_id: "superpi-abort-test",
+		});
+		expect(textOf(result)).toContain("pong");
+	});
+
+	it("stops immediately for an already-aborted Superpi root wait", async () => {
+		const run = new SubagentRun({
+			id: "superpi-pre-abort-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(run);
+		const controller = new AbortController();
+		controller.abort();
+		const pending = buildGetResultTool(superpiDeps()).execute(
+			"10c",
+			{ agent_id: "superpi-pre-abort-test", wait: true },
+			controller.signal,
+		);
+		await expect(pending).rejects.toThrow("child left running");
+		expect(run.terminationIntent).toBeUndefined();
+		expect(run.terminal).toBe(false);
+	});
+
+	it("still returns a normal Superpi root wait result when not aborted", async () => {
+		const run = new SubagentRun({
+			id: "superpi-wait-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(run);
+		const pending = buildGetResultTool(superpiDeps()).execute("10d", {
+			agent_id: "superpi-wait-test",
+			wait: true,
+		});
+		run.transition("completed", { summary: "pong" });
+		const result = await pending;
+		expect(textOf(result)).toContain("pong");
+	});
+
+	it("reads the Superpi root predicate at execution time", async () => {
+		const run = new SubagentRun({
+			id: "superpi-dynamic-test",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(run);
+		let superpiRoot = false;
+		const deps = { ...noopDeps(), isSuperpiRoot: () => superpiRoot };
+		const controller = new AbortController();
+		const pending = buildGetResultTool(deps).execute(
+			"10e",
+			{ agent_id: "superpi-dynamic-test", wait: true },
+			controller.signal,
+		);
+		// Default mode terminates the now-aborted child.
+		controller.abort();
+		expect(run.terminationIntent).toBe("aborted");
+		run.transition("aborted", { error: "parent turn aborted" });
+		await pending;
+		expect(run.terminal).toBe(true);
+
+		// A second call, now in Superpi mode, must not cache the factory value.
+		const superpiRun = new SubagentRun({
+			id: "superpi-dynamic-later",
+			subagentType: "explore",
+			displayName: "explore",
+		});
+		getRunRegistry().add(superpiRun);
+		superpiRoot = true;
+		const superpiController = new AbortController();
+		const superpiPending = buildGetResultTool(deps).execute(
+			"10f",
+			{ agent_id: "superpi-dynamic-later", wait: true },
+			superpiController.signal,
+		);
+		await superpiController.abort();
+		await expect(superpiPending).rejects.toThrow("child left running");
+		expect(superpiRun.terminationIntent).toBeUndefined();
 	});
 });
 
