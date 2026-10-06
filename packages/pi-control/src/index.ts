@@ -13,7 +13,9 @@ import { logStartup } from "./utils/logger.js";
 import { universallyDeniedTools } from "./utils/tool-hiding.js";
 import {
 	getSubagentSessionRegistry,
+	resolveSessionLineageRoot,
 	subscribeSubagentLifecycle,
+	type SubagentDetectionContext,
 } from "./utils/subagent.js";
 import { clearPromptStore, rememberUserPrompt } from "./utils/auto-state.js";
 import { clearAutoCache } from "./utils/auto-decisions.js";
@@ -113,10 +115,19 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		},
 	);
 
+	/**
+	 * The lineage root this instance's session shares its mode under. A
+	 * top-level session is its own root; an in-process subagent child resolves
+	 * to its spawner, so it inherits that session's mode.
+	 */
+	const modeScope = (ctx: SubagentDetectionContext): string | null =>
+		resolveSessionLineageRoot(ctx, getSubagentSessionRegistry());
+
 	function setWidgetForMode(ctx: {
 		ui: { setWidget: (id: string, lines: string[]) => void };
+		sessionManager?: SubagentDetectionContext["sessionManager"];
 	}): void {
-		const mode = modeStore.get();
+		const mode = modeStore.get(modeScope(ctx));
 		if (mode === "ignore") {
 			ctx.ui.setWidget("pi-controls-mode", ["[pi-controls: IGNORE]"]);
 		} else if (mode === "inform") {
@@ -136,9 +147,10 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	pi.registerShortcut(cycleKey as any, {
 		description: "Cycle pi-controls mode: enforce → ignore → inform",
 		handler: (ctx) => {
-			const currentIndex = MODES.indexOf(modeStore.get());
+			const scope = modeScope(ctx);
+			const currentIndex = MODES.indexOf(modeStore.get(scope));
 			const next = MODES[(currentIndex + 1) % MODES.length];
-			modeStore.set(next);
+			modeStore.set(scope, next);
 			setWidgetForMode(ctx);
 			ctx.ui.notify(
 				`[pi-controls] Mode set to: ${next}`,
@@ -151,9 +163,10 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		args: string,
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
+		const scope = modeScope(ctx);
 		const arg = args.trim().toLowerCase() as ControlsMode;
 		if (MODES.includes(arg)) {
-			modeStore.set(arg);
+			modeStore.set(scope, arg);
 			setWidgetForMode(ctx);
 			ctx.ui.notify(`[pi-controls] Mode set to: ${arg}`, MODE_NOTIFY_TYPE[arg]);
 			return;
@@ -167,7 +180,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		if (!choice) return;
 		// Parse the mode from the choice label (e.g. "enforce — enforce ...").
 		const selected = choice.split(" — ")[0] as ControlsMode;
-		modeStore.set(selected);
+		modeStore.set(scope, selected);
 		setWidgetForMode(ctx);
 		ctx.ui.notify(
 			`[pi-controls] Mode set to: ${selected}`,
@@ -237,7 +250,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 		// Re-arm forwarding against the live context before any tool call.
 		forwardingManager.start(ctx);
 		rememberUserPrompt(ctx.sessionManager.getSessionId(), event.prompt);
-		if (modeStore.get() === "ignore") return;
+		if (modeStore.get(modeScope(ctx)) === "ignore") return;
 		const config = loader.getConfig();
 
 		const activeTools = pi.getActiveTools();
@@ -254,7 +267,7 @@ export default async function piControls(pi: ExtensionAPI): Promise<void> {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		const mode = modeStore.get();
+		const mode = modeStore.get(modeScope(ctx));
 		if (mode === "ignore") return undefined;
 		const config = loader.getConfig();
 		return handleToolCall(

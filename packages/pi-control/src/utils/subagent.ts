@@ -285,6 +285,34 @@ export function isSubagentContext(
 	return isUnderSubagentSessionsDir(readSessionDir(ctx));
 }
 
+/**
+ * The session id whose lineage a session shares its pi-controls mode under.
+ *
+ * Walks the in-process subagent registry up from the current session to its
+ * top-most registered ancestor, so a child (and a grandchild) reads the same
+ * mode as the session that spawned it. A top-level session — one the registry
+ * does not know — is its own root. Returns `null` when the context exposes no
+ * session id, in which case the caller falls back to a single unscoped mode.
+ *
+ * Cycles are impossible for a well-formed lineage, but guarded so a corrupted
+ * registry entry cannot hang the walk.
+ */
+export function resolveSessionLineageRoot(
+	ctx: SubagentDetectionContext,
+	registry: SubagentSessionRegistry,
+): string | null {
+	let sessionId = readSessionId(ctx);
+	if (!sessionId) return null;
+	const seen = new Set<string>();
+	while (!seen.has(sessionId)) {
+		seen.add(sessionId);
+		const parent = normalizeSessionId(registry.get(sessionId)?.parentSessionId);
+		if (!parent) break;
+		sessionId = parent;
+	}
+	return sessionId;
+}
+
 // ── Target resolution ─────────────────────────────────────────────────────────
 
 /** How a forwarding target was found. */

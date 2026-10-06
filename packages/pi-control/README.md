@@ -495,7 +495,7 @@ pi-controls has three modes, switched with `/controls <mode>` (alias `/pi-contro
 
 A non-default mode shows a `[pi-controls: INFORM]` / `[pi-controls: IGNORE]` widget. The mode resets to `enforce` on restart.
 
-The mode is **process-wide**, not per session. In-process subagent children share their parent's process and read the live mode, so `/controls ignore` in the parent disables enforcement in its subagents too (their forwarded asks stop). Out-of-process subagents run their own pi-controls instance and keep their own mode.
+The mode is **session-scoped**: unrelated top-level sessions keep independent modes. In-process subagent children resolve to their parent's lineage, so `/controls ignore` in the parent disables enforcement in its subagents too (their forwarded asks stop). Out-of-process subagents run their own pi-controls instance and keep their own mode.
 
 ---
 

@@ -7,14 +7,27 @@ import {
 describe("ControlsModeStore", () => {
 	it("defaults to enforce", () => {
 		expect(new ControlsModeStore().get()).toBe("enforce");
+		expect(new ControlsModeStore().get("session-a")).toBe("enforce");
 	});
 
-	it("round-trips the last mode set", () => {
+	it("round-trips the last mode set per scope", () => {
 		const store = new ControlsModeStore();
-		store.set("ignore");
-		expect(store.get()).toBe("ignore");
-		store.set("inform");
-		expect(store.get()).toBe("inform");
+		store.set("session-a", "ignore");
+		expect(store.get("session-a")).toBe("ignore");
+		store.set("session-a", "inform");
+		expect(store.get("session-a")).toBe("inform");
+	});
+
+	it("keeps unrelated scopes independent", () => {
+		const store = new ControlsModeStore();
+		store.set("session-a", "ignore");
+		store.set("session-b", "inform");
+		expect(store.get("session-a")).toBe("ignore");
+		expect(store.get("session-b")).toBe("inform");
+		store.clear("session-a");
+		expect(store.get("session-a")).toBe("enforce");
+		// Clearing one scope must not disturb another.
+		expect(store.get("session-b")).toBe("inform");
 	});
 
 	it("shares one store across module instances in a process", async () => {
@@ -31,8 +44,8 @@ describe("ControlsModeStore", () => {
 		const child = fresh.getControlsModeStore();
 		expect(child).toBe(parent);
 
-		parent.set("ignore");
-		expect(child.get()).toBe("ignore");
-		parent.set("enforce");
+		parent.set("session-a", "ignore");
+		expect(child.get("session-a")).toBe("ignore");
+		parent.clear("session-a");
 	});
 });

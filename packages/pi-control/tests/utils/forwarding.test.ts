@@ -23,6 +23,7 @@ import {
 	getSubagentSessionRegistry,
 	isSubagentContext,
 	resolveForwardingTarget,
+	resolveSessionLineageRoot,
 	subscribeSubagentLifecycle,
 	type LifecycleEventBus,
 } from "../../src/utils/subagent.js";
@@ -113,6 +114,44 @@ describe("subagent registry", () => {
 		registry.register("child-b", {});
 		expect(registry.has("child-b")).toBe(true);
 		registry.unregister("child-b");
+	});
+});
+
+describe("session lineage root", () => {
+	it("treats a top-level session as its own root", () => {
+		expect(
+			resolveSessionLineageRoot(
+				makeCtx({ sessionId: "top-level" }),
+				getSubagentSessionRegistry(),
+			),
+		).toBe("top-level");
+	});
+
+	it("resolves a child to its spawning session", () => {
+		registerChild("lineage-child", "lineage-parent");
+		expect(
+			resolveSessionLineageRoot(
+				makeCtx({ sessionId: "lineage-child" }),
+				getSubagentSessionRegistry(),
+			),
+		).toBe("lineage-parent");
+	});
+
+	it("walks a grandchild up to the top-level ancestor", () => {
+		registerChild("lineage-child", "lineage-parent");
+		registerChild("lineage-grandchild", "lineage-child");
+		expect(
+			resolveSessionLineageRoot(
+				makeCtx({ sessionId: "lineage-grandchild" }),
+				getSubagentSessionRegistry(),
+			),
+		).toBe("lineage-parent");
+	});
+
+	it("returns null when the context exposes no session id", () => {
+		expect(
+			resolveSessionLineageRoot({}, getSubagentSessionRegistry()),
+		).toBeNull();
 	});
 });
 

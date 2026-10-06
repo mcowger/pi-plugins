@@ -49,7 +49,7 @@ Local wins on deep merge. Config is JSONC (comments allowed). The `$cwd` special
 - **Multi-target resolution:** when a bash command touches multiple paths (via redirect targets or path args), the most restrictive action across all of them wins. Order: `deny > ask > log > nudge > allow`.
 - **Bash parsing:** `bash-parser` (CJS, imported dynamically) produces a full AST. Fallback is a regex tokenizer if the parser fails. Each pipeline stage (`|`, `&&`, `;`) is evaluated independently.
 - **Nudge injection:** `pendingNudges` map in `src/hooks/tool-call.ts` is keyed by `toolCallId`. The `tool_result` handler in `src/index.ts` consumes it to append the message to the tool result content — so the LLM sees it inline.
-- **Modes:** `/controls enforce|ignore|inform` — `ignore` skips all evaluation; `inform` evaluates and shows what would happen but never blocks.
+- **Modes:** `/controls enforce|ignore|inform` — `ignore` skips all evaluation; `inform` evaluates and shows what would happen but never blocks. Modes are scoped to a session lineage: unrelated top-level sessions are independent, and in-process subagents inherit their parent's mode.
 - **`$safe-bash` preset:** a rule with `"pattern": "$safe-bash"` expands to ~140 allow rules for read-only commands. See `src/utils/safe-commands.ts` for the full list.
 
 ## Source layout
@@ -66,7 +66,7 @@ src/
     matching.ts      # Specificity scoring, rule matching, mostRestrictive()
     path.ts          # ~ expansion and path normalization
     logger.ts        # Append-only JSONL log at <agentDir>/extensions/pi-controls.log
-    subagent.ts      # Process-global child/serving registries, subagent detection, forwarding-target resolution
+    subagent.ts      # Process-global child/serving registries, subagent detection, session-lineage resolution, forwarding-target resolution
     forwarding-io.ts # Forwarded-ask directories, atomic JSON IO, serving heartbeat store
     forwarding.ts    # ForwardingManager (parent poller), forwardAsk (child), promptSelect dispatcher
     safe-commands.ts # SAFE_BASH_PATTERNS array (the $safe-bash preset source of truth)
