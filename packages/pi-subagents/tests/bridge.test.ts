@@ -4,15 +4,15 @@ import {
 	createRunBridge,
 	MAX_BRIDGE_RECORD_BYTES,
 	projectActivity,
-	type SuperpiSubagentBridgeRecord,
+	type PlexuspiSubagentBridgeRecord,
 	toBridgeValue,
 } from "../src/bridge.js";
 
 function capture() {
-	const records: SuperpiSubagentBridgeRecord[] = [];
+	const records: PlexuspiSubagentBridgeRecord[] = [];
 	return {
 		records,
-		sink: (record: SuperpiSubagentBridgeRecord) => records.push(record),
+		sink: (record: PlexuspiSubagentBridgeRecord) => records.push(record),
 	};
 }
 
@@ -43,7 +43,7 @@ describe("createRunBridge", () => {
 				],
 			},
 		});
-		const message = `superpi:child:v1:${JSON.stringify({ version: 1, sessionKey: "root", record: records[1] })}`;
+		const message = `plexuspi:child:v1:${JSON.stringify({ version: 1, sessionKey: "root", record: records[1] })}`;
 		const frame = JSON.stringify({
 			type: "extension_ui_request",
 			method: "notify",

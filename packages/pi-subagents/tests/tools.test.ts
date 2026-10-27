@@ -21,7 +21,7 @@ function noopDeps() {
 			excludedExtensions: [],
 		}),
 		getSessionState: () => undefined,
-		isSuperpiRoot: () => false,
+		isPlexuspiRoot: () => false,
 		emitChildCreated: () => {},
 		emitChildDisposed: () => {},
 		emitEvent: () => {},
@@ -29,8 +29,8 @@ function noopDeps() {
 	};
 }
 
-function superpiDeps() {
-	return { ...noopDeps(), isSuperpiRoot: () => true };
+function plexuspiDeps() {
+	return { ...noopDeps(), isPlexuspiRoot: () => true };
 }
 
 function requiredOf(tool: { parameters: unknown }): string[] {
@@ -377,17 +377,17 @@ describe("get_subagent_result", () => {
 		expect(textOf(result)).toContain("still running");
 	});
 
-	it("leaves the child running when a Superpi root wait is aborted", async () => {
+	it("leaves the child running when a Plexuspi root wait is aborted", async () => {
 		const run = new SubagentRun({
-			id: "superpi-abort-test",
+			id: "plexuspi-abort-test",
 			subagentType: "explore",
 			displayName: "explore",
 		});
 		getRunRegistry().add(run);
 		const controller = new AbortController();
-		const pending = buildGetResultTool(superpiDeps()).execute(
+		const pending = buildGetResultTool(plexuspiDeps()).execute(
 			"10",
-			{ agent_id: "superpi-abort-test", wait: true },
+			{ agent_id: "plexuspi-abort-test", wait: true },
 			controller.signal,
 		);
 		controller.abort();
@@ -398,24 +398,24 @@ describe("get_subagent_result", () => {
 		expect(run.status).toBe("running");
 		// It still settles later and a follow-up read returns the result.
 		run.transition("completed", { summary: "pong" });
-		const result = await buildGetResultTool(superpiDeps()).execute("10b", {
-			agent_id: "superpi-abort-test",
+		const result = await buildGetResultTool(plexuspiDeps()).execute("10b", {
+			agent_id: "plexuspi-abort-test",
 		});
 		expect(textOf(result)).toContain("pong");
 	});
 
-	it("stops immediately for an already-aborted Superpi root wait", async () => {
+	it("stops immediately for an already-aborted Plexuspi root wait", async () => {
 		const run = new SubagentRun({
-			id: "superpi-pre-abort-test",
+			id: "plexuspi-pre-abort-test",
 			subagentType: "explore",
 			displayName: "explore",
 		});
 		getRunRegistry().add(run);
 		const controller = new AbortController();
 		controller.abort();
-		const pending = buildGetResultTool(superpiDeps()).execute(
+		const pending = buildGetResultTool(plexuspiDeps()).execute(
 			"10c",
-			{ agent_id: "superpi-pre-abort-test", wait: true },
+			{ agent_id: "plexuspi-pre-abort-test", wait: true },
 			controller.signal,
 		);
 		await expect(pending).rejects.toThrow("child left running");
@@ -423,15 +423,15 @@ describe("get_subagent_result", () => {
 		expect(run.terminal).toBe(false);
 	});
 
-	it("still returns a normal Superpi root wait result when not aborted", async () => {
+	it("still returns a normal Plexuspi root wait result when not aborted", async () => {
 		const run = new SubagentRun({
-			id: "superpi-wait-test",
+			id: "plexuspi-wait-test",
 			subagentType: "explore",
 			displayName: "explore",
 		});
 		getRunRegistry().add(run);
-		const pending = buildGetResultTool(superpiDeps()).execute("10d", {
-			agent_id: "superpi-wait-test",
+		const pending = buildGetResultTool(plexuspiDeps()).execute("10d", {
+			agent_id: "plexuspi-wait-test",
 			wait: true,
 		});
 		run.transition("completed", { summary: "pong" });
@@ -439,19 +439,19 @@ describe("get_subagent_result", () => {
 		expect(textOf(result)).toContain("pong");
 	});
 
-	it("reads the Superpi root predicate at execution time", async () => {
+	it("reads the Plexuspi root predicate at execution time", async () => {
 		const run = new SubagentRun({
-			id: "superpi-dynamic-test",
+			id: "plexuspi-dynamic-test",
 			subagentType: "explore",
 			displayName: "explore",
 		});
 		getRunRegistry().add(run);
-		let superpiRoot = false;
-		const deps = { ...noopDeps(), isSuperpiRoot: () => superpiRoot };
+		let plexuspiRoot = false;
+		const deps = { ...noopDeps(), isPlexuspiRoot: () => plexuspiRoot };
 		const controller = new AbortController();
 		const pending = buildGetResultTool(deps).execute(
 			"10e",
-			{ agent_id: "superpi-dynamic-test", wait: true },
+			{ agent_id: "plexuspi-dynamic-test", wait: true },
 			controller.signal,
 		);
 		// Default mode terminates the now-aborted child.
@@ -461,23 +461,23 @@ describe("get_subagent_result", () => {
 		await pending;
 		expect(run.terminal).toBe(true);
 
-		// A second call, now in Superpi mode, must not cache the factory value.
-		const superpiRun = new SubagentRun({
-			id: "superpi-dynamic-later",
+		// A second call, now in Plexuspi mode, must not cache the factory value.
+		const plexuspiRun = new SubagentRun({
+			id: "plexuspi-dynamic-later",
 			subagentType: "explore",
 			displayName: "explore",
 		});
-		getRunRegistry().add(superpiRun);
-		superpiRoot = true;
-		const superpiController = new AbortController();
-		const superpiPending = buildGetResultTool(deps).execute(
+		getRunRegistry().add(plexuspiRun);
+		plexuspiRoot = true;
+		const plexuspiController = new AbortController();
+		const plexuspiPending = buildGetResultTool(deps).execute(
 			"10f",
-			{ agent_id: "superpi-dynamic-later", wait: true },
-			superpiController.signal,
+			{ agent_id: "plexuspi-dynamic-later", wait: true },
+			plexuspiController.signal,
 		);
-		await superpiController.abort();
-		await expect(superpiPending).rejects.toThrow("child left running");
-		expect(superpiRun.terminationIntent).toBeUndefined();
+		await plexuspiController.abort();
+		await expect(plexuspiPending).rejects.toThrow("child left running");
+		expect(plexuspiRun.terminationIntent).toBeUndefined();
 	});
 });
 

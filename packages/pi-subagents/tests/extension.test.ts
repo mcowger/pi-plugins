@@ -186,16 +186,16 @@ describe("extension wiring", () => {
 		getLineageRegistry().delete(childId);
 	});
 
-	it("reads the Superpi root signal at tool execution", async () => {
+	it("reads the Plexuspi root signal at tool execution", async () => {
 		const dir = await setupAgentDir(1);
 		const { pi, tools, flags, handlers } = createFakePi();
 		piSubagents(pi as never);
 
 		// The companion owns the launch flag; re-registering it here is the
 		// duplicate-flag diagnostic this signal replaces.
-		expect(flags.has("superpi-companion-root")).toBe(false);
+		expect(flags.has("plexuspi-companion-root")).toBe(false);
 
-		const rootId = `ext-superpi-root-${process.pid}`;
+		const rootId = `ext-plexuspi-root-${process.pid}`;
 		await handlers.get("session_start")?.(
 			{ type: "session_start" },
 			fakeContext(rootId, dir),
@@ -205,16 +205,16 @@ describe("extension wiring", () => {
 		expect(
 			await abortWaitLeavesChildRunning(
 				tools,
-				`ext-superpi-default-${process.pid}`,
+				`ext-plexuspi-default-${process.pid}`,
 			),
 		).toBe(false);
 
 		// Root signaled: the same abort leaves the child running.
-		pi.events.emit("superpi:root:v1", { version: 1, sessionId: rootId });
+		pi.events.emit("plexuspi:root:v1", { version: 1, sessionId: rootId });
 		expect(
 			await abortWaitLeavesChildRunning(
 				tools,
-				`ext-superpi-signaled-${process.pid}`,
+				`ext-plexuspi-signaled-${process.pid}`,
 			),
 		).toBe(true);
 	});
@@ -225,34 +225,34 @@ describe("extension wiring", () => {
 		for (const timing of ["before", "after"] as const) {
 			const { pi, tools, handlers } = createFakePi();
 			piSubagents(pi as never);
-			const rootId = `ext-superpi-${timing}-${process.pid}`;
+			const rootId = `ext-plexuspi-${timing}-${process.pid}`;
 			if (timing === "before") {
-				pi.events.emit("superpi:root:v1", { version: 1, sessionId: rootId });
+				pi.events.emit("plexuspi:root:v1", { version: 1, sessionId: rootId });
 			}
 			await handlers.get("session_start")?.(
 				{ type: "session_start" },
 				fakeContext(rootId, dir),
 			);
 			if (timing === "after") {
-				pi.events.emit("superpi:root:v1", { version: 1, sessionId: rootId });
+				pi.events.emit("plexuspi:root:v1", { version: 1, sessionId: rootId });
 			}
 			expect(
 				await abortWaitLeavesChildRunning(
 					tools,
-					`ext-superpi-${timing}-run-${process.pid}`,
+					`ext-plexuspi-${timing}-run-${process.pid}`,
 				),
 			).toBe(true);
 		}
 	});
 
-	it("scopes Superpi mode to the signaled session and clears it on shutdown", async () => {
+	it("scopes Plexuspi mode to the signaled session and clears it on shutdown", async () => {
 		const dir = await setupAgentDir(1);
 		const { pi, tools, handlers } = createFakePi();
 		piSubagents(pi as never);
 
-		const rootId = `ext-superpi-scope-root-${process.pid}`;
-		const otherId = `ext-superpi-scope-other-${process.pid}`;
-		pi.events.emit("superpi:root:v1", { version: 1, sessionId: rootId });
+		const rootId = `ext-plexuspi-scope-root-${process.pid}`;
+		const otherId = `ext-plexuspi-scope-other-${process.pid}`;
+		pi.events.emit("plexuspi:root:v1", { version: 1, sessionId: rootId });
 
 		await handlers.get("session_start")?.(
 			{ type: "session_start" },
@@ -261,7 +261,7 @@ describe("extension wiring", () => {
 		expect(
 			await abortWaitLeavesChildRunning(
 				tools,
-				`ext-superpi-scope-root-run-${process.pid}`,
+				`ext-plexuspi-scope-root-run-${process.pid}`,
 			),
 		).toBe(true);
 
@@ -272,7 +272,7 @@ describe("extension wiring", () => {
 		expect(
 			await abortWaitLeavesChildRunning(
 				tools,
-				`ext-superpi-scope-other-run-${process.pid}`,
+				`ext-plexuspi-scope-other-run-${process.pid}`,
 			),
 		).toBe(false);
 
@@ -287,7 +287,7 @@ describe("extension wiring", () => {
 		expect(
 			await abortWaitLeavesChildRunning(
 				tools,
-				`ext-superpi-scope-reload-run-${process.pid}`,
+				`ext-plexuspi-scope-reload-run-${process.pid}`,
 			),
 		).toBe(false);
 	});

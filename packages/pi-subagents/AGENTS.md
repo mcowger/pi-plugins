@@ -76,8 +76,8 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   by name, so a changed description is contract-neutral.
 - **Lifecycle events.** `subagents:created` / `started` / `completed` / `failed` /
   `steered` with tintinweb's payloads (built by `transcript.ts`).
-- **Superpi observation bridge.** `index.ts` also emits every run on the
-  versioned `superpi:subagent:v1` bus channel via `src/bridge.ts`. Each record is
+- **Plexuspi observation bridge.** `index.ts` also emits every run on the
+  versioned `plexuspi:subagent:v1` bus channel via `src/bridge.ts`. Each record is
   a serializable envelope `{ version: 1, runId, sequence, type, … }` with
   `type: "created" | "activity" | "terminal"`, distinct `runId` / `toolCallId` /
   `childSessionId` identities, and `parentRunId` for nested grandchildren.
@@ -100,21 +100,21 @@ pinned by `tests/playback.test.ts` and the recorded fixtures.
   model name. A definition's unsupported level is dropped; a caller's is refused.
 - **Fail closed on admission.** A refusal throws before any session/file/network
   work and creates no run and no id.
-- **Cancellation stops the child — except under Superpi root.**
+- **Cancellation stops the child — except under Plexuspi root.**
   `SubagentRun.requestTermination` aborts its `AbortController`;
   `spawnSubagent` listens on that signal and calls `session.abort()`. Keep the
   wiring: without it, termination only records intent and the child keeps
   running. The per-definition `timeout_minutes` timer and an aborted
   `get_subagent_result { wait: true }` caller both terminate through it, and
   `run.terminationReason` becomes the terminal error. Scoped exception
-  authorized by Superpi requirement R6.4 ("parent turn interruption leaves
-  background children running"): when the extension runs under the Superpi root,
+  authorized by Plexuspi requirement R6.4 ("parent turn interruption leaves
+  background children running"): when the extension runs under the Plexuspi root,
   an aborted `get_subagent_result { wait: true }` caller stops waiting and
   rejects without calling `requestTermination`; the child stays registered and
   running until it settles on its own or the root `session_shutdown` stops owned
   children through the existing cleanup path. The companion is the only owner of
-  the `--superpi-companion-root` launch flag and announces root identity on the
-  public `superpi:root:v1` event-bus channel after its root session starts; this
+  the `--plexuspi-companion-root` launch flag and announces root identity on the
+  public `plexuspi:root:v1` event-bus channel after its root session starts; this
   extension subscribes to that channel, records the signaled session ids, and
   checks the currently bound session lazily at tool execution. It never
   registers the flag itself (a second registration is a duplicate-flag

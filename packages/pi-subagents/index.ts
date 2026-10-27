@@ -5,12 +5,12 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { SUPERPI_SUBAGENT_BRIDGE_CHANNEL } from "./src/bridge.js";
+import { PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL } from "./src/bridge.js";
 import { defaultOperatorConfig, loadOperatorConfig } from "./src/config.js";
 import {
 	SUBAGENT_CHILD_DISPOSED,
 	SUBAGENT_CHILD_SESSION_CREATED,
-	SUPERPI_ROOT_SIGNAL_CHANNEL,
+	PLEXUSPI_ROOT_SIGNAL_CHANNEL,
 } from "./src/constants.js";
 import { filterActiveTools, gateForSession } from "./src/gate.js";
 import { getLineageRegistry, resolveLineage } from "./src/lineage.js";
@@ -35,7 +35,7 @@ import type { Lineage } from "./src/types.js";
  * exactly one child session per `Agent` call.
  */
 export default function piSubagents(pi: ExtensionAPI): void {
-	// The Superpi companion owns the `--superpi-companion-root` launch flag. This
+	// The Plexuspi companion owns the `--plexuspi-companion-root` launch flag. This
 	// extension must not register it again (a duplicate registration is a
 	// diagnostic); instead it learns its root identity from the public root
 	// signal the companion emits once its root session starts.
@@ -58,7 +58,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		const events = pi.events;
 		if (!events || typeof events.on !== "function") return;
 		rootSignalUnsubscribe = events.on(
-			SUPERPI_ROOT_SIGNAL_CHANNEL,
+			PLEXUSPI_ROOT_SIGNAL_CHANNEL,
 			recordRootSignal,
 		);
 	}
@@ -86,7 +86,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		// Lazy root check: the companion's signal is recorded against a session id,
 		// and `sessionId` is rebound on every session_start. A child session never
 		// receives the signal, so only the signaled root session matches.
-		isSuperpiRoot: () =>
+		isPlexuspiRoot: () =>
 			sessionId !== undefined && rootSessionIds.has(sessionId),
 		emitChildCreated: (parentSessionId, childSessionId) => {
 			pi.events.emit(SUBAGENT_CHILD_SESSION_CREATED, {
@@ -99,7 +99,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		},
 		emitEvent: (channel, data) => pi.events.emit(channel, data),
 		emitBridge: (record) =>
-			pi.events.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, record),
+			pi.events.emit(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, record),
 	};
 
 	for (const tool of buildSubagentTools(deps)) {
@@ -221,13 +221,13 @@ export default function piSubagents(pi: ExtensionAPI): void {
 
 export { spawnSubagent, type SpawnRequest } from "./src/runtime.js";
 export {
-	SUPERPI_SUBAGENT_BRIDGE_CHANNEL,
-	SUPERPI_SUBAGENT_BRIDGE_VERSION,
-	type SuperpiSubagentActivityKind,
-	type SuperpiSubagentActivityRecord,
-	type SuperpiSubagentBridgeOutcome,
-	type SuperpiSubagentBridgeRecord,
-	type SuperpiSubagentBridgeType,
+	PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL,
+	PLEXUSPI_SUBAGENT_BRIDGE_VERSION,
+	type PlexuspiSubagentActivityKind,
+	type PlexuspiSubagentActivityRecord,
+	type PlexuspiSubagentBridgeOutcome,
+	type PlexuspiSubagentBridgeRecord,
+	type PlexuspiSubagentBridgeType,
 } from "./src/bridge.js";
 export {
 	discoverAgentDefinitions,

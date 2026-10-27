@@ -5,7 +5,7 @@ import {
 	type ExtensionToolContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { SuperpiSubagentBridgeRecord } from "./bridge.js";
+import type { PlexuspiSubagentBridgeRecord } from "./bridge.js";
 import {
 	AGENT_TOOL_NAME,
 	GET_RESULT_TOOL_NAME,
@@ -70,19 +70,19 @@ export interface SubagentToolDeps {
 	/** Session-scoped facts captured on session_start. */
 	getSessionState(): SessionState | undefined;
 	/**
-	 * Superpi root integration mode, read lazily at tool execution from the
+	 * Plexuspi root integration mode, read lazily at tool execution from the
 	 * companion's session-scoped root signal. Never derived from the
 	 * environment: children inherit it and would misidentify as the root.
 	 */
-	isSuperpiRoot(): boolean;
+	isPlexuspiRoot(): boolean;
 	/** Announce an in-process child before its extensions bind. */
 	emitChildCreated(parentSessionId: string, childSessionId: string): void;
 	/** Announce a child's disposal after a terminal state. */
 	emitChildDisposed(childSessionId: string): void;
 	/** Emit a cross-extension lifecycle event on the parent's bus. */
 	emitEvent(channel: string, data: unknown): void;
-	/** Emit a versioned observation record on the superpi subagent bridge. */
-	emitBridge(record: SuperpiSubagentBridgeRecord): void;
+	/** Emit a versioned observation record on the plexuspi subagent bridge. */
+	emitBridge(record: PlexuspiSubagentBridgeRecord): void;
 }
 
 function currentState(
@@ -238,8 +238,8 @@ function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
 
 /**
  * Wait for a run to settle, but stop promptly when the parent turn is
- * interrupted. Superpi root sessions leave background children running
- * (Superpi R6.4), so this path rejects the aborted caller instead of calling
+ * interrupted. Plexuspi root sessions leave background children running
+ * (Plexuspi R6.4), so this path rejects the aborted caller instead of calling
  * `requestTermination`. The run stays registered and still settles normally, so
  * its terminal notification is delivered once it finishes.
  */
@@ -469,8 +469,8 @@ export function buildGetResultTool(deps: SubagentToolDeps) {
 				),
 			);
 			if (params.wait === true) {
-				if (deps.isSuperpiRoot()) {
-					// Superpi R6.4: interrupting the parent turn leaves owned background
+				if (deps.isPlexuspiRoot()) {
+					// Plexuspi R6.4: interrupting the parent turn leaves owned background
 					// children running. Stop waiting (reject the aborted caller) without
 					// requesting termination; root `session_shutdown` still stops owned
 					// children through the existing cleanup path.

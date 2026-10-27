@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import {
-	SUPERPI_SUBAGENT_BRIDGE_CHANNEL,
-	type SuperpiSubagentBridgeRecord,
+	PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL,
+	type PlexuspiSubagentBridgeRecord,
 } from "../src/bridge.js";
 import { SubagentRun } from "../src/run.js";
 import {
@@ -92,11 +92,11 @@ describe("resolveTerminalStatus", () => {
 describe("relayChildBridgeRecords", () => {
 	it("forwards a grandchild record from the child-local bus and stops on cleanup", () => {
 		const bus = createEventBus();
-		const forwarded: SuperpiSubagentBridgeRecord[] = [];
+		const forwarded: PlexuspiSubagentBridgeRecord[] = [];
 		const stop = relayChildBridgeRecords(bus, (record) =>
 			forwarded.push(record),
 		);
-		const grandchild: SuperpiSubagentBridgeRecord = {
+		const grandchild: PlexuspiSubagentBridgeRecord = {
 			version: 1,
 			runId: "grandchild",
 			sequence: 1,
@@ -104,13 +104,13 @@ describe("relayChildBridgeRecords", () => {
 			parentRunId: "child",
 		};
 
-		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, grandchild);
+		bus.emit(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, grandchild);
 		expect(forwarded).toEqual([grandchild]);
 		// Identities survive unchanged; the relay never rewrites the record.
 		expect(forwarded[0]?.parentRunId).toBe("child");
 
 		stop();
-		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, {
+		bus.emit(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, {
 			...grandchild,
 			sequence: 2,
 		});
@@ -124,13 +124,13 @@ describe("relayChildBridgeRecords", () => {
 			forwarded.push(record),
 		);
 
-		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, { hello: "world" });
-		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, {
+		bus.emit(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, { hello: "world" });
+		bus.emit(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, {
 			version: 2,
 			runId: "x",
 			sequence: 1,
 		});
-		bus.emit(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, null);
+		bus.emit(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, null);
 		expect(forwarded).toEqual([]);
 		stop();
 	});

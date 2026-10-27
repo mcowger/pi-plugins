@@ -33,13 +33,13 @@ export const PROJECT_AGENTS_DIR = ".pi/agents";
 export const DEFAULT_MAX_DEPTH = 1;
 
 /**
- * Public Pi event-bus channel the Superpi companion emits after its root
+ * Public Pi event-bus channel the Plexuspi companion emits after its root
  * session starts. The signal carries the root session id and is the only root
  * identity this extension trusts; it is checked lazily at tool execution
  * against the currently bound session (never from inherited environment, which
  * children share with the root) so SDK children cannot misidentify as root.
  */
-export const SUPERPI_ROOT_SIGNAL_CHANNEL = "superpi:root:v1";
+export const PLEXUSPI_ROOT_SIGNAL_CHANNEL = "plexuspi:root:v1";
 
 /** Process-global registry keys. Jiti isolates modules per session. */
 export const LINEAGE_REGISTRY_SYMBOL = Symbol.for(

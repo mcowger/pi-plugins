@@ -108,7 +108,7 @@ normalized to Paseo's provider-subagent enum.
   live. Child sessions persist to their own JSONL file under
   `<agentDir>/subagents/<run-id>/`.
 - **Versioned observation bridge.** `src/bridge.ts` projects each owned run onto
-  the `superpi:subagent:v1` bus channel. Records are `{ version: 1, runId,
+  the `plexuspi:subagent:v1` bus channel. Records are `{ version: 1, runId,
   sequence, type, ... }` with `created` / `activity` / `terminal` types, distinct
   run, tool-call, and child-session identities, and `parentRunId` for nested
   grandchildren. Activity includes message and tool start/update/end plus turn

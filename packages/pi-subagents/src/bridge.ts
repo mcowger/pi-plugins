@@ -1,7 +1,7 @@
 import type { SubagentStatus } from "./status.js";
 
 /**
- * Superpi subagent bridge.
+ * Plexuspi subagent bridge.
  *
  * The extension owns the child sessions, so it is the only place that can see a
  * child's live events. This module projects that in-process knowledge onto a
@@ -26,12 +26,12 @@ import type { SubagentStatus } from "./status.js";
  */
 
 /** Bus channel for every bridge record. */
-export const SUPERPI_SUBAGENT_BRIDGE_CHANNEL = "superpi:subagent:v1";
+export const PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL = "plexuspi:subagent:v1";
 
 /** Schema version carried by every record. */
-export const SUPERPI_SUBAGENT_BRIDGE_VERSION = 1 as const;
+export const PLEXUSPI_SUBAGENT_BRIDGE_VERSION = 1 as const;
 
-export type SuperpiSubagentBridgeType = "created" | "activity" | "terminal";
+export type PlexuspiSubagentBridgeType = "created" | "activity" | "terminal";
 
 /**
  * Host-facing outcome vocabulary. It deliberately differs from the internal
@@ -39,7 +39,7 @@ export type SuperpiSubagentBridgeType = "created" | "activity" | "terminal";
  * The internal run and follow-up tool details keep their own status; `reason`
  * carries the richer detail (timeout, turn limit, provider error).
  */
-export type SuperpiSubagentBridgeOutcome =
+export type PlexuspiSubagentBridgeOutcome =
 	| "completed"
 	| "steered"
 	| "canceled"
@@ -52,11 +52,11 @@ export type SuperpiSubagentBridgeOutcome =
  * id, `toolCallId` is the spawning Pi tool invocation, and `childSessionId` is
  * the child Pi session. `parentRunId` is present for nested grandchildren.
  */
-export interface SuperpiSubagentBridgeRecord {
+export interface PlexuspiSubagentBridgeRecord {
 	version: 1;
 	runId: string;
 	sequence: number;
-	type: SuperpiSubagentBridgeType;
+	type: PlexuspiSubagentBridgeType;
 	parentRunId?: string;
 	parentSessionId?: string;
 	childSessionId?: string;
@@ -68,7 +68,7 @@ export interface SuperpiSubagentBridgeRecord {
 	cwd?: string;
 	/** Activity payload for `type: "activity"`. */
 	record?: unknown;
-	outcome?: SuperpiSubagentBridgeOutcome;
+	outcome?: PlexuspiSubagentBridgeOutcome;
 	result?: unknown;
 	reason?: string;
 	/** Set when the payload exceeded the per-record cap; see `omittedBytes`. */
@@ -76,7 +76,7 @@ export interface SuperpiSubagentBridgeRecord {
 	omittedBytes?: number;
 }
 
-export type SuperpiSubagentActivityKind =
+export type PlexuspiSubagentActivityKind =
 	| "message_start"
 	| "message_update"
 	| "message_end"
@@ -87,8 +87,8 @@ export type SuperpiSubagentActivityKind =
 	| "turn_end";
 
 /** Bounded, serializable projection of one live child session event. */
-export interface SuperpiSubagentActivityRecord {
-	kind: SuperpiSubagentActivityKind;
+export interface PlexuspiSubagentActivityRecord {
+	kind: PlexuspiSubagentActivityKind;
 	toolCallId?: string;
 	toolName?: string;
 	isError?: boolean;
@@ -104,7 +104,7 @@ export interface SuperpiSubagentActivityRecord {
 /** Internal status → host outcome. */
 export function bridgeOutcomeFor(
 	status: SubagentStatus,
-): SuperpiSubagentBridgeOutcome {
+): PlexuspiSubagentBridgeOutcome {
 	switch (status) {
 		case "error":
 			return "failed";
@@ -191,7 +191,7 @@ function readString(
  */
 export function projectActivity(
 	event: unknown,
-): SuperpiSubagentActivityRecord | undefined {
+): PlexuspiSubagentActivityRecord | undefined {
 	if (!event || typeof event !== "object") return undefined;
 	const source = event as Record<string, unknown>;
 	const type = source.type;
@@ -248,7 +248,7 @@ export function projectActivity(
 	}
 }
 
-export interface SuperpiSubagentBridgeIdentifiers {
+export interface PlexuspiSubagentBridgeIdentifiers {
 	runId: string;
 	parentRunId?: string;
 	parentSessionId?: string;
@@ -259,8 +259,8 @@ export interface SuperpiSubagentBridgeIdentifiers {
 	cwd?: string;
 }
 
-export type SuperpiSubagentBridgeSink = (
-	record: SuperpiSubagentBridgeRecord,
+export type PlexuspiSubagentBridgeSink = (
+	record: PlexuspiSubagentBridgeRecord,
 ) => void;
 
 export interface RunBridge {
@@ -270,7 +270,7 @@ export interface RunBridge {
 	activity(event: unknown): boolean;
 	/** Emit the terminal record exactly once. Later calls are ignored. */
 	terminal(terminal: {
-		outcome: SuperpiSubagentBridgeOutcome;
+		outcome: PlexuspiSubagentBridgeOutcome;
 		result?: unknown;
 		reason?: string;
 		timestamp?: number;
@@ -279,9 +279,9 @@ export interface RunBridge {
 }
 
 function baseFields(
-	ids: SuperpiSubagentBridgeIdentifiers,
+	ids: PlexuspiSubagentBridgeIdentifiers,
 ): Pick<
-	SuperpiSubagentBridgeRecord,
+	PlexuspiSubagentBridgeRecord,
 	| "parentRunId"
 	| "parentSessionId"
 	| "childSessionId"
@@ -321,10 +321,10 @@ function boundedResult(value: unknown): unknown {
  * never lost even when the payload cannot be forwarded.
  */
 function omitRecord(
-	record: SuperpiSubagentBridgeRecord,
+	record: PlexuspiSubagentBridgeRecord,
 	omittedBytes: number,
-): SuperpiSubagentBridgeRecord {
-	const omitted: SuperpiSubagentBridgeRecord = {
+): PlexuspiSubagentBridgeRecord {
+	const omitted: PlexuspiSubagentBridgeRecord = {
 		version: record.version,
 		runId: record.runId,
 		sequence: record.sequence,
@@ -354,8 +354,8 @@ function omitRecord(
 
 /** Bound one record to `MAX_BRIDGE_RECORD_BYTES`, omitting the payload if needed. */
 function boundRecord(
-	record: SuperpiSubagentBridgeRecord,
-): SuperpiSubagentBridgeRecord {
+	record: PlexuspiSubagentBridgeRecord,
+): PlexuspiSubagentBridgeRecord {
 	let bytes: number;
 	try {
 		bytes = byteLength(JSON.stringify(record));
@@ -372,19 +372,19 @@ function boundRecord(
  * reopen a finished child (R4.6).
  */
 export function createRunBridge(
-	sink: SuperpiSubagentBridgeSink,
-	ids: SuperpiSubagentBridgeIdentifiers,
+	sink: PlexuspiSubagentBridgeSink,
+	ids: PlexuspiSubagentBridgeIdentifiers,
 ): RunBridge {
 	let sequence = 0;
 	let terminalEmitted = false;
 
 	function emit(
-		type: SuperpiSubagentBridgeType,
-		fields: Partial<SuperpiSubagentBridgeRecord>,
+		type: PlexuspiSubagentBridgeType,
+		fields: Partial<PlexuspiSubagentBridgeRecord>,
 	): void {
 		sink(
 			boundRecord({
-				version: SUPERPI_SUBAGENT_BRIDGE_VERSION,
+				version: PLEXUSPI_SUBAGENT_BRIDGE_VERSION,
 				runId: ids.runId,
 				sequence: ++sequence,
 				type,

@@ -20,10 +20,10 @@ import {
 import {
 	bridgeOutcomeFor,
 	createRunBridge,
-	SUPERPI_SUBAGENT_BRIDGE_CHANNEL,
+	PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL,
 	type RunBridge,
-	type SuperpiSubagentBridgeRecord,
-	type SuperpiSubagentBridgeSink,
+	type PlexuspiSubagentBridgeRecord,
+	type PlexuspiSubagentBridgeSink,
 } from "./bridge.js";
 import { resolveApprovedExtensionRefs } from "./extensions.js";
 import type { ResolvedInvocation } from "./invocation.js";
@@ -70,7 +70,7 @@ export interface SpawnRequest {
 	onChildCreated?: (childSessionId: string) => void;
 	onChildDisposed?: (childSessionId: string) => void;
 	/** Versioned observation bridge sink; absent disables bridge emission. */
-	bridgeSink?: SuperpiSubagentBridgeSink;
+	bridgeSink?: PlexuspiSubagentBridgeSink;
 }
 
 function createRunId(): string {
@@ -81,23 +81,23 @@ function createRunId(): string {
  * Relay a child session's own bridge bus to the spawning sink.
  *
  * A child builds its own resource loader, which creates its own event bus, so a
- * grandchild's `superpi:subagent:v1` records never reach the root companion.
+ * grandchild's `plexuspi:subagent:v1` records never reach the root companion.
  * This forwards them up the ownership chain through the parent's sink without
  * sharing the parent bus, so the child can never inherit the root signal.
  */
 export function relayChildBridgeRecords(
 	bus: Pick<EventBus, "on">,
-	sink: SuperpiSubagentBridgeSink,
+	sink: PlexuspiSubagentBridgeSink,
 ): () => void {
-	return bus.on(SUPERPI_SUBAGENT_BRIDGE_CHANNEL, (record) => {
+	return bus.on(PLEXUSPI_SUBAGENT_BRIDGE_CHANNEL, (record) => {
 		if (!isBridgeRecord(record)) return;
 		sink(record);
 	});
 }
 
-function isBridgeRecord(value: unknown): value is SuperpiSubagentBridgeRecord {
+function isBridgeRecord(value: unknown): value is PlexuspiSubagentBridgeRecord {
 	if (!value || typeof value !== "object") return false;
-	const record = value as Partial<SuperpiSubagentBridgeRecord>;
+	const record = value as Partial<PlexuspiSubagentBridgeRecord>;
 	return (
 		record.version === 1 &&
 		typeof record.runId === "string" &&
